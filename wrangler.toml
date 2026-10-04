@@ -1,0 +1,12 @@
+name = "rozo-checkout-mcp"
+main = "src/index.ts"
+account_id = "2d3f34ca0a1426b30a7d07cf79bdac90" # Eng@icedropper.com's Account, owns the rozo.ai zone
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+# Custom domain. Left commented on purpose: deploying and attaching
+# mcp.rozo.ai is a separate, owner-approved step.
+# routes = [
+#   { pattern = "mcp.rozo.ai", custom_domain = true }
+# ]
