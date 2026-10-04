@@ -61,7 +61,8 @@ describe('tools/list', () => {
     expect(tools.map((t) => t.name).sort()).toEqual(['create_deposit_order', 'payment_status', 'quote_invoice', 'supported_coins']);
     for (const t of tools) {
       expect(t.title).toBeTruthy();
-      expect(t.annotations.readOnlyHint).toBe(true);
+      expect(t.annotations.readOnlyHint).toBe(t.name !== 'create_deposit_order');
+      expect(t.annotations.destructiveHint).toBe(false);
       expect(t.inputSchema.type).toBe('object');
     }
     const create = tools.find((t) => t.name === 'create_deposit_order');

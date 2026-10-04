@@ -7,6 +7,6 @@ workers_dev = true
 
 # Custom domain. Left commented on purpose: deploying and attaching
 # mcp.rozo.ai is a separate, owner-approved step.
-# routes = [
-#   { pattern = "mcp.rozo.ai", custom_domain = true }
-# ]
+routes = [
+  { pattern = "mcp.rozo.ai", custom_domain = true }
+]

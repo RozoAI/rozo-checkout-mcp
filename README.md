@@ -130,6 +130,6 @@ domain route commented out until then.
 
 ## MCP registry
 
-`server.json` describes this server for the official MCP registry as `ai.rozo/checkout`, with the
+`server.json` describes this server for the official MCP registry as `io.github.rozoai/checkout`, with the
 remote `https://mcp.rozo.ai/mcp?src=registry`. Publishing under the `ai.rozo` namespace requires
 proving control of `rozo.ai` (DNS or HTTP verification with `mcp-publisher`).

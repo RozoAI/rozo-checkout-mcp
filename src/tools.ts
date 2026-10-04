@@ -159,7 +159,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
         chainId: z.enum(CHAIN_IDS).describe('Source chain id from supported_coins, e.g. "900" (Solana), "8453" (Base), "lightning".'),
         tokenSymbol: z.string().min(2).max(8).describe('Token you will pay with, e.g. USDC, USDT, BTC.'),
       },
-      annotations: { title: 'Create a deposit order', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      annotations: { title: 'Create a deposit order', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
     async ({ url, chainId, tokenSymbol }) => {
       try {

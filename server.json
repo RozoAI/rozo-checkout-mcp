@@ -1,6 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "ai.rozo/checkout",
+  "name": "io.github.rozoai/checkout",
   "title": "Rozo Checkout",
   "description": "Pay OpenRouter top-ups with USDC/USDT on 6 chains or BTC Lightning. Never holds funds.",
   "version": "0.1.0",
