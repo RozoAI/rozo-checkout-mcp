@@ -220,7 +220,10 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
 
         // 4. expiry floor on both clocks
         const intentExp = parseTime(payment?.expiresAt);
-        const deadline = Math.min(intentExp ?? Infinity, p.expiryMs ?? Infinity);
+        if (intentExp === null) {
+          return fail('EXPIRY_UNPARSABLE', 'The order expiry is missing or unparsable; refusing to hand out a deposit address.', base);
+        }
+        const deadline = Math.min(intentExp, p.expiryMs ?? Infinity);
         if (!Number.isFinite(deadline) || deadline - now() < MIN_REMAINING_MS) {
           return fail('NOT_ENOUGH_TIME', 'Less than 10 minutes remain on the order or the Coinbase link. Ask for a fresh link; do not fund this order.', base);
         }

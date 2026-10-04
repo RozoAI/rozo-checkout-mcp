@@ -33,6 +33,7 @@ async function request(fetchFn: FetchLike, method: 'GET' | 'POST', url: string, 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   let res: Response;
+  let text: string;
   try {
     res = await fetchFn(url, {
       method,
@@ -44,12 +45,13 @@ async function request(fetchFn: FetchLike, method: 'GET' | 'POST', url: string, 
       body: body !== undefined ? JSON.stringify(body) : undefined,
       signal: controller.signal,
     });
+    // The timer also covers reading the body: a stalled body must not hang the tool call.
+    text = await res.text();
   } catch (err: any) {
     throw new UpstreamError(err?.name === 'AbortError' ? 'HTTP_TIMEOUT' : 'HTTP_UNREACHABLE', `${method} upstream request failed`, null);
   } finally {
     clearTimeout(timer);
   }
-  const text = await res.text();
   let json: any = null;
   try {
     json = text ? JSON.parse(text) : null;

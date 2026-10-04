@@ -161,3 +161,15 @@ describe('worker routes', () => {
     expect(g.status).toBe(405);
   });
 });
+
+describe('expiry guard', () => {
+  it('refuses when the order expiry is missing', async () => {
+    const { fn } = mockFetch({
+      payment: { status: 'payment_unpaid', source: { chainId: '900', tokenSymbol: 'USDT', receiverAddress: DEPOSIT, amount: '5' } },
+    });
+    const out = await rpc('tools/call', { name: 'create_deposit_order', arguments: { url: LINK, chainId: '900', tokenSymbol: 'USDT' } }, fn);
+    expect(out.result.isError).toBe(true);
+    expect(out.result.content[0].text).toContain('EXPIRY_UNPARSABLE');
+    expect(out.result.content[0].text).not.toContain(DEPOSIT);
+  });
+});
