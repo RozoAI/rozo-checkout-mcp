@@ -119,6 +119,23 @@ describe('create_deposit_order', () => {
     expect(payload.support).toEqual({ email: 'hi@rozo.ai', x: 'https://x.com/ROZOai', discord: 'https://discord.gg/EfWejgTbuU' });
   });
 
+  it('reports contactEmailProvided false when the order was reused', async () => {
+    const { fn } = mockFetch();
+    const reusedFn = (async (url: string, init?: RequestInit) =>
+      url === `${MPP_BASE}/create-invoice`
+        ? new Response(JSON.stringify({ rozoPaymentId: ID, reused: true, paymentLink: 'https://x/pay' }), { status: 200, headers: { 'content-type': 'application/json' } })
+        : fn(url, init)) as unknown as typeof fetch;
+    const out = await rpc(
+      'tools/call',
+      { name: 'create_deposit_order', arguments: { url: LINK, chainId: '900', tokenSymbol: 'USDT', email: 'payer@example.com' } },
+      reusedFn,
+    );
+    expect(out.result.isError).toBeFalsy();
+    const payload = JSON.parse(out.result.content[0].text);
+    expect(payload.reused).toBe(true);
+    expect(payload.contactEmailProvided).toBe(false);
+  });
+
   it('omits email when absent and rejects an invalid one without any network call', async () => {
     const a = mockFetch();
     await rpc('tools/call', { name: 'create_deposit_order', arguments: { url: LINK, chainId: '900', tokenSymbol: 'USDT' } }, a.fn);

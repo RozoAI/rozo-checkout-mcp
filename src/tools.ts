@@ -260,8 +260,9 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
             amountUnit: str(source.amountUnit) ?? (lightning ? 'sats' : token),
           },
           expiresAt: new Date(deadline).toISOString(),
-          // The address is never echoed. A reused order keeps the email it was created with.
-          contactEmailProvided: Boolean(email),
+          // True only when the email went out with a NEW order: the router never
+          // attaches one to a reused order. The address is never echoed.
+          contactEmailProvided: Boolean(email) && !base.reused,
           instructions: [
             'Send EXACTLY deposit.amount of deposit.tokenSymbol on deposit.chain to deposit.payTo, from your own wallet.',
             memo ? 'Include the memo exactly as given (TEXT memo). Without it the funds will likely be lost.' : 'No memo is used for this deposit.',
