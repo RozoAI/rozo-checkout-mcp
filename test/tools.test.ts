@@ -102,6 +102,53 @@ describe('create_deposit_order', () => {
     for (const c of calls.filter((c) => c.url.startsWith(INTENTS_BASE))) expect(c.method).toBe('GET');
   });
 
+  it('forwards an optional contact email (normalized) and never echoes it', async () => {
+    const { fn, calls } = mockFetch();
+    const out = await rpc(
+      'tools/call',
+      { name: 'create_deposit_order', arguments: { url: LINK, chainId: '900', tokenSymbol: 'USDT', email: ' Payer@Example.com ' } },
+      fn,
+    );
+    const create = calls.find((c) => c.url === `${MPP_BASE}/create-invoice`)!;
+    expect(create.body.email).toBe('payer@example.com');
+    expect(out.result.isError).toBeFalsy();
+    const text = out.result.content[0].text;
+    expect(text).not.toContain('payer@example.com');
+    const payload = JSON.parse(text);
+    expect(payload.contactEmailProvided).toBe(true);
+    expect(payload.support).toEqual({ email: 'hi@rozo.ai', x: 'https://x.com/ROZOai', discord: 'https://discord.gg/EfWejgTbuU' });
+  });
+
+  it('reports contactEmailProvided false when the order was reused', async () => {
+    const { fn } = mockFetch();
+    const reusedFn = (async (url: string, init?: RequestInit) =>
+      url === `${MPP_BASE}/create-invoice`
+        ? new Response(JSON.stringify({ rozoPaymentId: ID, reused: true, paymentLink: 'https://x/pay' }), { status: 200, headers: { 'content-type': 'application/json' } })
+        : fn(url, init)) as unknown as typeof fetch;
+    const out = await rpc(
+      'tools/call',
+      { name: 'create_deposit_order', arguments: { url: LINK, chainId: '900', tokenSymbol: 'USDT', email: 'payer@example.com' } },
+      reusedFn,
+    );
+    expect(out.result.isError).toBeFalsy();
+    const payload = JSON.parse(out.result.content[0].text);
+    expect(payload.reused).toBe(true);
+    expect(payload.contactEmailProvided).toBe(false);
+  });
+
+  it('omits email when absent and rejects an invalid one without any network call', async () => {
+    const a = mockFetch();
+    await rpc('tools/call', { name: 'create_deposit_order', arguments: { url: LINK, chainId: '900', tokenSymbol: 'USDT' } }, a.fn);
+    const create = a.calls.find((c) => c.url === `${MPP_BASE}/create-invoice`)!;
+    expect('email' in create.body).toBe(false);
+
+    const b = mockFetch();
+    const out = await rpc('tools/call', { name: 'create_deposit_order', arguments: { url: LINK, chainId: '900', tokenSymbol: 'USDT', email: 'nope' } }, b.fn);
+    expect(out.result.isError).toBe(true);
+    expect(out.result.content[0].text).toContain('INVALID_EMAIL');
+    expect(b.calls).toHaveLength(0);
+  });
+
   it('refuses a blacklisted deposit address', async () => {
     const future = new Date(Date.now() + 3600e3).toISOString();
     const { fn } = mockFetch({

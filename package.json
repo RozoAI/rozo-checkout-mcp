@@ -1,6 +1,6 @@
 {
   "name": "rozo-checkout-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Read-only remote MCP server for Rozo checkout (Cloudflare Worker).",
   "type": "module",

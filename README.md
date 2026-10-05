@@ -27,7 +27,7 @@ There are no secrets, no auth and no stored state; each request is handled state
 | --- | --- | --- |
 | `supported_coins` | none | Static list of supported chains and tokens (mirrors the `@rozoai/checkout` CLI). |
 | `quote_invoice` | `{ url }` | Merchant, invoice amount, what the payer pays, link expiry, and whether the link is still payable. Creates nothing. |
-| `create_deposit_order` | `{ url, chainId, tokenSymbol }` | Creates a one-time deposit order; you pay from your own wallet. Returns the deposit address (or BOLT11 invoice for Lightning), the exact amount, any required memo, `expiresAt` and `rozoPaymentId`. |
+| `create_deposit_order` | `{ url, chainId, tokenSymbol, email? }` | Creates a one-time deposit order; you pay from your own wallet. Returns the deposit address (or BOLT11 invoice for Lightning), the exact amount, any required memo, `expiresAt` and `rozoPaymentId`. The optional `email` is a contact address stored with the order so ROZO can reach the payer if the payment needs attention; an invalid one is refused with `INVALID_EMAIL` and nothing is created. |
 | `payment_status` | `{ rozoPaymentId }` | Pay-in, bridging/payout progress, and whether the Coinbase invoice settled. |
 
 `create_deposit_order` applies the same guards as the CLI before it returns a deposit address:
@@ -41,6 +41,10 @@ Upstream endpoints (identical request shapes to the CLI, all keyless):
 - `POST https://apiserver.mpprouter.dev/v1/services/rozo-agent-api/create-invoice`
 - `GET  https://apiserver.mpprouter.dev/v1/services/rozo-agent-api/invoice-status?rozo_payment_id=...`
 - `GET  https://intentapiv4.rozo.ai/functions/v1/payment-api/payments/<uuid>` (read-only)
+
+## Support
+
+If an order is stuck or anything goes wrong: email hi@rozo.ai, X https://x.com/ROZOai, Discord https://discord.gg/EfWejgTbuU. Tool results carry the same channels in a `support` block.
 
 ## Channel attribution: `?src=`
 

@@ -4,6 +4,7 @@ import { UpstreamError, type Api } from './api';
 import { isBlacklisted } from './blacklist';
 import { CHAIN_IDS, SUPPORTED_SOURCES, chainName, isSupportedSource } from './coins';
 import { InputError, assertRozoPaymentId, parseCoinbaseLink } from './ids';
+import { SUPPORT, normalizeContactEmail } from './support';
 
 /** Minimum time left on both the Rozo order and the Coinbase link before we hand out a deposit. */
 export const MIN_REMAINING_MS = 10 * 60 * 1000;
@@ -158,11 +159,22 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
         url: linkUrlSchema,
         chainId: z.enum(CHAIN_IDS).describe('Source chain id from supported_coins, e.g. "900" (Solana), "8453" (Base), "lightning".'),
         tokenSymbol: z.string().min(2).max(8).describe('Token you will pay with, e.g. USDC, USDT, BTC.'),
+        email: z
+          .string()
+          .max(320)
+          .optional()
+          .describe(
+            'Optional contact email so ROZO can reach the payer if the payment needs attention. Ask the user once if they are present; never required, omit it if they decline.',
+          ),
       },
       annotations: { title: 'Create a deposit order', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
-    async ({ url, chainId, tokenSymbol }) => {
+    async ({ url, chainId, tokenSymbol, email: rawEmail }) => {
       try {
+        const email = normalizeContactEmail(rawEmail);
+        if (email === undefined) {
+          return fail('INVALID_EMAIL', 'email must be a valid email address (name@example.com). It is optional: omit it to continue without one.');
+        }
         const token = tokenSymbol.trim().toUpperCase();
         if (!isSupportedSource(chainId, token)) {
           return fail('UNSUPPORTED_SOURCE', `${token} on ${chainName(chainId) ?? chainId} is not supported.`, { supportedSources: SUPPORTED_SOURCES });
@@ -182,6 +194,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
           tokenSymbol: token,
           quoteReceipt: typeof quote?.quoteReceipt === 'string' ? quote.quoteReceipt : null,
           src: ctx.src,
+          email,
         });
         const rozoPaymentId = assertRozoPaymentId(created?.rozoPaymentId);
 
@@ -189,7 +202,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
         const payment = await ctx.api.getPayment(rozoPaymentId);
         const source = payment?.source ?? {};
         const status = str(payment?.status);
-        const base = { rozoPaymentId, reused: Boolean(created?.reused) };
+        const base = { rozoPaymentId, reused: Boolean(created?.reused), support: SUPPORT };
 
         if (moneyDetected(source, status)) {
           return fail('ORDER_ALREADY_FUNDED', 'This link already has a funded or in-flight Rozo order. Do NOT pay again; check payment_status.', base);
@@ -247,11 +260,15 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
             amountUnit: str(source.amountUnit) ?? (lightning ? 'sats' : token),
           },
           expiresAt: new Date(deadline).toISOString(),
+          // True only when the email went out with a NEW order: the router never
+          // attaches one to a reused order. The address is never echoed.
+          contactEmailProvided: Boolean(email) && !base.reused,
           instructions: [
             'Send EXACTLY deposit.amount of deposit.tokenSymbol on deposit.chain to deposit.payTo, from your own wallet.',
             memo ? 'Include the memo exactly as given (TEXT memo). Without it the funds will likely be lost.' : 'No memo is used for this deposit.',
             'The amount can exceed the invoice: it includes bridge and network fees.',
             'Then poll payment_status with rozoPaymentId. Never send a second time for the same order.',
+            `If anything goes wrong, contact ROZO: ${SUPPORT.email}, X ${SUPPORT.x}, Discord ${SUPPORT.discord}.`,
           ],
         });
       } catch (err) {
@@ -301,6 +318,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
             senderAddressMasked: mask(source.senderAddress),
           },
           payout: { txHash: str(payment?.destination?.txHash, 200), confirmedAt: str(payment?.destination?.confirmedAt) },
+          support: SUPPORT,
           guidance: settled
             ? 'Done: the Coinbase invoice is settled.'
             : funded

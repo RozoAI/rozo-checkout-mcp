@@ -81,7 +81,7 @@ export function makeApi(fetchFn: FetchLike) {
     quoteInvoice(url: string) {
       return request(fetchFn, 'POST', `${MPP_BASE}/quote-invoice`, { url });
     },
-    createInvoice(args: { url: string; chainId: string; tokenSymbol: string; quoteReceipt?: string | null; src: string }) {
+    createInvoice(args: { url: string; chainId: string; tokenSymbol: string; quoteReceipt?: string | null; src: string; email?: string | null }) {
       return request(fetchFn, 'POST', `${MPP_BASE}/create-invoice`, buildCreateInvoiceBody(args));
     },
     invoiceStatus(rozoPaymentId: string) {
@@ -103,11 +103,14 @@ export function buildCreateInvoiceBody(args: {
   tokenSymbol: string;
   quoteReceipt?: string | null;
   src: string;
+  /** Optional payer contact email, already normalized. Omitted when absent. */
+  email?: string | null;
 }) {
   return {
     url: args.url,
     source: { chainId: String(args.chainId), tokenSymbol: args.tokenSymbol },
     ...(args.quoteReceipt ? { quoteReceipt: args.quoteReceipt } : {}),
     ...attributionFields(args.src),
+    ...(args.email ? { email: args.email } : {}),
   };
 }
