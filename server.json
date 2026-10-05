@@ -3,7 +3,7 @@
   "name": "io.github.RozoAI/checkout",
   "title": "Rozo Checkout",
   "description": "Pay OpenRouter top-ups with USDC/USDT on 6 chains or BTC Lightning. Never holds funds.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "websiteUrl": "https://checkout.rozo.ai",
   "repository": {
     "url": "https://github.com/RozoAI/rozo-checkout-mcp",
