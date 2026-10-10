@@ -48,6 +48,7 @@ export const TOPUP_SOURCES = [
 const TOPUP_CHAINS = TOPUP_SOURCES.map((s) => s.chain) as unknown as [string, ...string[]];
 export const TOPUP_MIN_USD = 5;
 
+export const RETRYABLE_503 = new Set(['X402_RETRY', 'X402_PAYER_MODE_CHANGED', 'X402_LEDGER_UNAVAILABLE']);
 const DISABLED = 'x402 payer not enabled yet. Rozo has not switched on x402 payments; nothing was charged. Try again later.';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const KEY_RE = /^ak_[A-Za-z0-9_-]{8,200}$/;
@@ -98,12 +99,18 @@ export async function x402Request(fetchFn: FetchLike, method: 'GET' | 'POST', pa
   } finally {
     clearTimeout(timer);
   }
-  if (res.status === 503) throw new UpstreamError('X402_PAYER_DISABLED', DISABLED, 503);
   let json: any = null;
   try {
     json = text ? JSON.parse(text) : null;
   } catch {
     json = null;
+  }
+  if (res.status === 503) {
+    // A few 503s mean "retry with the same idempotencyKey"; the rest mean the
+    // payer is not switched on (off, shadow, not configured).
+    const serverCode = typeof json?.code === 'string' ? json.code : typeof json?.error?.code === 'string' ? json.error.code : '';
+    if (RETRYABLE_503.has(serverCode)) throw new UpstreamError(serverCode, 'Transient x402 payer error. Retry with the same idempotencyKey.', 503);
+    throw new UpstreamError('X402_PAYER_DISABLED', DISABLED, 503);
   }
   if (!res.ok) {
     const code =
@@ -226,7 +233,19 @@ export function registerX402Tools(server: McpServer, ctx: X402Context): void {
           key = newKey;
           createdKey = newKey;
         }
-        const resp = await x402Request(ctx.fetchFn, 'POST', '/topup', key, { amount: amt, token: tok, chain });
+        // `source` repeats the choice in create-invoice's shape: a router reading
+        // only `source` would otherwise fall back to its default coin.
+        const resp = await x402Request(ctx.fetchFn, 'POST', '/topup', key, {
+          amount: amt,
+          token: tok,
+          chain,
+          source: { chainId: chain, tokenSymbol: tok },
+        });
+        const gotChain = pick(resp, 'deposit.chainId', 'deposit.chain', 'chainId', 'chain');
+        const gotToken = pick(resp, 'deposit.tokenSymbol', 'deposit.token', 'tokenSymbol', 'token');
+        if ((gotChain !== null && String(gotChain) !== chain) || (gotToken !== null && String(gotToken).toUpperCase() !== tok)) {
+          return fail('X402_TOPUP_MISMATCH', `Rozo returned a deposit for a different coin (${short(gotToken, 12)} on chain ${short(gotChain, 12)}). Do not send anything; the address is withheld.`);
+        }
         const address = pick(resp, 'depositAddress', 'receiverAddress', 'address', 'deposit.address');
         const lnInvoice = pick(resp, 'lnInvoice', 'invoice', 'deposit.lnInvoice');
         if (!address && !lnInvoice) return fail('X402_BAD_TOPUP', 'Rozo returned a topup order without a deposit address.');
@@ -241,10 +260,10 @@ export function registerX402Tools(server: McpServer, ctx: X402Context): void {
                 agentKeyNotice: 'New agent key, shown only this once. Store it securely (it owns your x402 balance) and pass it as "Authorization: Bearer <key>" on the MCP connection from now on.',
               }
             : { agentKeyMasked: maskKey(key) }),
-          orderId: pick(resp, 'orderId', 'rozoPaymentId', 'paymentId', 'id'),
+          orderId: pick(resp, 'paymentId', 'orderId', 'rozoPaymentId', 'id'),
           deposit: {
-            chain: pick(resp, 'chain', 'chainId', 'deposit.chain') ?? chain,
-            token: pick(resp, 'token', 'tokenSymbol', 'deposit.token') ?? tok,
+            chain: gotChain ?? chain,
+            token: gotToken ?? tok,
             amount: pick(resp, 'payAmount', 'amountToSend', 'deposit.amount', 'amount'),
             address,
             memo,
@@ -312,6 +331,8 @@ export function registerX402Tools(server: McpServer, ctx: X402Context): void {
           ...(resource !== undefined ? { resource } : {}),
           accepts,
           budget: budget.trim(),
+          // Same cap under the name the router reads.
+          maxAmountUsd: budget.trim(),
           idempotencyKey,
         };
         const resp = await x402Request(ctx.fetchFn, 'POST', '/sign', resolved.key, body);
@@ -320,7 +341,8 @@ export function registerX402Tools(server: McpServer, ctx: X402Context): void {
           (resp?.paymentPayload && typeof resp.paymentPayload === 'object' ? btoa(JSON.stringify(resp.paymentPayload)) : null);
         if (typeof signature !== 'string' || !signature) return fail('X402_BAD_SIGNATURE', 'Rozo answered without a PAYMENT-SIGNATURE value.', { idempotencyKey });
         const headerName =
-          (typeof resp?.headerName === 'string' && resp.headerName) || ((x402Version ?? 2) >= 2 ? 'PAYMENT-SIGNATURE' : 'X-PAYMENT');
+          [resp?.headerName, resp?.header].find((h) => typeof h === 'string' && /^[A-Za-z-]+$/.test(h)) ??
+          ((x402Version ?? 2) >= 2 ? 'PAYMENT-SIGNATURE' : 'X-PAYMENT');
         return ok({
           headerName,
           paymentSignature: signature,

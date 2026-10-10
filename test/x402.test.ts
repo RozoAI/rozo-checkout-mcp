@@ -82,7 +82,7 @@ describe('x402_sign', () => {
     expect(out.payload.idempotencyKey).toBe(IDEM);
     expect(calls).toHaveLength(1);
     expect(calls[0]!.headers.authorization).toBe(`Bearer ${KEY}`);
-    expect(calls[0]!.body).toEqual({ x402Version: 2, accepts: [baseReq], budget: '0.05', idempotencyKey: IDEM });
+    expect(calls[0]!.body).toEqual({ x402Version: 2, accepts: [baseReq], budget: '0.05', maxAmountUsd: '0.05', idempotencyKey: IDEM });
     expect(out.text).not.toContain(KEY);
   });
 
@@ -146,6 +146,39 @@ describe('x402_sign', () => {
   });
 });
 
+describe('router response shapes', () => {
+  it('reads paymentId + deposit.{chainId,tokenSymbol,address,amount} and withholds a different coin', async () => {
+    const good = mockFetch({
+      'POST /topup': () => reply({ ok: true, paymentId: 'pay_1', deposit: { chainId: '900', tokenSymbol: 'USDT', address: SOL_DEPOSIT, amount: '20.2' } }),
+    });
+    const ok = await call('x402_topup', { amount: '20', token: 'USDT', chain: '900' }, good.fn, KEY);
+    expect(ok.payload.orderId).toBe('pay_1');
+    expect(ok.payload.deposit.address).toBe(SOL_DEPOSIT);
+    const bad = mockFetch({
+      'POST /topup': () => reply({ ok: true, paymentId: 'pay_2', deposit: { chainId: '8453', tokenSymbol: 'USDC', address: '0x3333333333333333333333333333333333333333', amount: '20' } }),
+    });
+    const mis = await call('x402_topup', { amount: '20', token: 'USDT', chain: '900' }, bad.fn, KEY);
+    expect(mis.payload.error.code).toBe('X402_TOPUP_MISMATCH');
+    expect(mis.text).not.toContain('0x3333333333333333333333333333333333333333');
+  });
+
+  it('503 X402_RETRY keeps its code (retry same key); X402_PAYER_SHADOW reads as not enabled', async () => {
+    const r = mockFetch({ 'POST /sign': () => reply({ ok: false, code: 'X402_RETRY', error: { code: 'X402_RETRY', message: 'x' } }, 503) });
+    const a = await call('x402_sign', { accepts: [baseReq], budget: '1', idempotencyKey: IDEM }, r.fn, KEY);
+    expect(a.payload.error.code).toBe('X402_RETRY');
+    expect(a.payload.idempotencyKey).toBe(IDEM);
+    const sh = mockFetch({ 'POST /sign': () => reply({ ok: false, code: 'X402_PAYER_SHADOW', error: { code: 'X402_PAYER_SHADOW', message: 'x' } }, 503) });
+    const b = await call('x402_sign', { accepts: [baseReq], budget: '1', idempotencyKey: IDEM }, sh.fn, KEY);
+    expect(b.payload.error.code).toBe('X402_PAYER_DISABLED');
+  });
+
+  it('uses the router "header" field as the header name', async () => {
+    const { fn } = mockFetch({ 'POST /sign': () => reply({ ok: true, header: 'PAYMENT-SIGNATURE', paymentSignature: 'S', paymentId: 'p' }) });
+    const out = await call('x402_sign', { accepts: [baseReq], budget: '1', idempotencyKey: IDEM }, fn, KEY);
+    expect(out.payload.headerName).toBe('PAYMENT-SIGNATURE');
+  });
+});
+
 describe('x402_topup', () => {
   it('creates a key when none is given, returns it once, and sends {amount, token, chain}', async () => {
     const { fn, calls } = mockFetch({
@@ -157,7 +190,7 @@ describe('x402_topup', () => {
     expect(out.payload.agentKey).toBe('ak_new_9876543210fedcba');
     expect(out.payload.deposit.address).toBe(SOL_DEPOSIT);
     const topup = calls.find((c) => c.url.endsWith('/topup'))!;
-    expect(topup.body).toEqual({ amount: '20', token: 'USDT', chain: '900' });
+    expect(topup.body).toEqual({ amount: '20', token: 'USDT', chain: '900', source: { chainId: '900', tokenSymbol: 'USDT' } });
     expect(topup.headers.authorization).toBe('Bearer ak_new_9876543210fedcba');
   });
 
