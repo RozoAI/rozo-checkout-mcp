@@ -37,8 +37,8 @@ nothing else.
 ### x402 tools
 
 Same fields as the HTTP API (`POST /v1/x402/topup`, `POST /v1/x402/sign`). The **payment leg is USDC on
-Base (`eip155:8453`) and USDC on Solana mainnet only**, x402 scheme `exact`; anything else is refused
-with `X402_UNSUPPORTED` before Rozo is called. Native ETH (Ethereum, Base, Arbitrum), BNB and SOL, plus
+Base (`eip155:8453`) only**, x402 scheme `exact`; anything else is refused with `X402_UNSUPPORTED`
+before Rozo is called. Solana payment leg is coming later. Native ETH (Ethereum, Base, Arbitrum), BNB and SOL, plus
 USDT, can fund the balance but never pay a seller directly.
 
 - Agent key: set it once on the connection as `Authorization: Bearer ak_...`
@@ -47,8 +47,9 @@ USDT, can fund the balance but never pay a seller directly.
   `x402_topup` creates it.
 - Idempotency: generate one UUID per payment and reuse it on every retry of `x402_sign`; the same key
   returns the same signature instead of charging twice. Error results carry the key back.
-- A `503` from Rozo is reported as `X402_PAYER_DISABLED` ("x402 payer not enabled yet"): nothing was
-  charged.
+- A `503` from Rozo (other than the retryable `X402_RETRY`, `X402_PAYER_MODE_CHANGED`,
+  `X402_LEDGER_UNAVAILABLE`) is reported as `X402_PAYER_DISABLED` ("x402 payer not enabled" for this key):
+  nothing was charged.
 - `payTo` and topup deposit addresses are checked against the compromised-address list.
 
 `create_deposit_order` applies the same guards as the CLI before it returns a deposit address:

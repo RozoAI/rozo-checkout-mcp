@@ -7,14 +7,16 @@
  *   POST /v1/x402/topup   { amount, token, chain }                 -> one-time deposit order
  *   POST /v1/x402/sign    { accepts, budget, idempotencyKey, ... } -> { paymentSignature } (PAYMENT-SIGNATURE value)
  *   Authorization: Bearer <agent key ak_...>
- *   503 = the payer switch is off ("x402 payer not enabled yet").
+ *   503 = the payer is off for this key ("x402 payer not enabled").
  *
  * This server stores nothing. The agent key comes from the MCP connection's
  * Authorization header, or the tool's agentKey argument, and is forwarded to
  * Rozo only. It is never echoed back except once, when x402_topup creates it.
  *
- * Payment leg: USDC on Base (eip155:8453) and USDC on Solana mainnet, x402
- * scheme "exact". Native coins and USDT are topup-only.
+ * Payment leg: USDC on Base (eip155:8453) only, x402 scheme "exact". Solana
+ * USDC is still recognized (constants and v1 alias kept) but refused with a
+ * "Solana payment leg is coming later" reason until that leg ships. Native
+ * coins and USDT are topup-only.
  */
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
@@ -49,7 +51,10 @@ const TOPUP_CHAINS = TOPUP_SOURCES.map((s) => s.chain) as unknown as [string, ..
 export const TOPUP_MIN_USD = 5;
 
 export const RETRYABLE_503 = new Set(['X402_RETRY', 'X402_PAYER_MODE_CHANGED', 'X402_LEDGER_UNAVAILABLE']);
-const DISABLED = 'x402 payer not enabled yet. Rozo has not switched on x402 payments; nothing was charged. Try again later.';
+const DISABLED = 'x402 payer not enabled for this key right now; nothing was charged. Try again later, or email hi@rozo.ai with the masked key.';
+export const SOLANA_COMING_LATER = 'Solana payment leg is coming later';
+/** Networks this payer signs for today. */
+export const PAYABLE_NETWORKS = new Set<string>([NETWORK_BASE]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const KEY_RE = /^ak_[A-Za-z0-9_-]{8,200}$/;
 
@@ -149,7 +154,8 @@ function rawUnsupportedReason(req: any): string | null {
   if (req.scheme !== 'exact') return `scheme ${String(req.scheme)} (only exact)`;
   const network = V1_ALIASES[req.network] ?? req.network;
   const usdc = USDC_ASSET[network];
-  if (!usdc) return `network ${String(req.network)} (only Base USDC and Solana USDC)`;
+  if (!usdc) return `network ${String(req.network)} (only Base USDC)`;
+  if (!PAYABLE_NETWORKS.has(network)) return network === NETWORK_SOLANA ? `USDC on Solana (${SOLANA_COMING_LATER})` : `network ${String(req.network)} (only Base USDC)`;
   const assetOk = network === NETWORK_BASE ? String(req.asset ?? '').toLowerCase() === usdc.toLowerCase() : String(req.asset ?? '') === usdc;
   if (!assetOk) return `asset ${String(req.asset)} is not USDC`;
   const amount = String(req.amount ?? req.maxAmountRequired ?? '');
@@ -185,7 +191,7 @@ function fromError(err: unknown): ToolResult {
   return fail('INTERNAL', 'Unexpected error.');
 }
 
-const PAY_LEG = 'The x402 payment leg is USDC on Base (eip155:8453) or USDC on Solana mainnet only, scheme "exact". Native coins and USDT can fund the balance (x402_topup) but never pay a seller directly.';
+const PAY_LEG = 'The x402 payment leg is USDC on Base (eip155:8453) only, scheme "exact"; Solana payment leg is coming later. Native coins and USDT can fund the balance (x402_topup) but never pay a seller directly.';
 
 const agentKeySchema = z
   .string()
@@ -294,7 +300,7 @@ export function registerX402Tools(server: McpServer, ctx: X402Context): void {
         'Same fields as POST /v1/x402/sign: accepts, budget, idempotencyKey. ' +
         PAY_LEG +
         ' Generate one idempotencyKey (UUID) per payment and reuse it on every retry: the same key returns the same signature instead of charging twice. ' +
-        'Never send Rozo your request body, headers or the seller API keys; only the accepts entry. A 503 means the x402 payer is not enabled yet.',
+        'Never send Rozo your request body, headers or the seller API keys; only the accepts entry. A 503 (other than X402_RETRY) means the x402 payer is not enabled for this key; nothing was charged.',
       inputSchema: {
         accepts: z
           .array(z.record(z.string(), z.unknown()))
