@@ -11,7 +11,7 @@ export function buildServer(opts: { fetchFn: FetchLike; src: string; now?: () =>
       instructions:
         'Pay an OpenRouter (Coinbase payment link) top-up with USDC/USDT on Solana, BNB Chain, Ethereum, Polygon, Base, Stellar, or BTC over Lightning. ' +
         'Flow: quote_invoice -> create_deposit_order -> the user sends from their own wallet -> payment_status. This server never holds keys or funds. ' +
-        'x402 APIs: x402_topup funds a prepaid Rozo balance with any supported coin; x402_sign returns a PAYMENT-SIGNATURE for one 402 requirement (USDC on Base or Solana only). You make the paid HTTP request yourself.',
+        'x402 APIs: x402_topup funds a prepaid Rozo balance with USDC or USDT only (native coins and Lightning are for create_deposit_order); x402_sign returns a PAYMENT-SIGNATURE for one 402 requirement (USDC on Base or Solana only). You make the paid HTTP request yourself.',
     },
   );
   registerTools(server, { api: makeApi(opts.fetchFn), src: opts.src, now: opts.now });

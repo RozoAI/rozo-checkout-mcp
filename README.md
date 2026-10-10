@@ -39,7 +39,7 @@ nothing else.
 Same fields as the HTTP API (`POST /v1/x402/topup`, `POST /v1/x402/sign`). The **payment leg is USDC on
 Base (`eip155:8453`) only**, x402 scheme `exact`; anything else is refused with `X402_UNSUPPORTED`
 before Rozo is called. Solana payment leg is coming later. Top ups take USDT on Solana, BNB Chain, Ethereum,
-Polygon and USDC on Solana, BNB Chain, Ethereum, Polygon, Base, Stellar; any other coin is answered with
+Polygon, Arbitrum and USDC on Solana, BNB Chain, Ethereum, Polygon, Arbitrum, Base, Stellar; any other coin is answered with
 `X402_TOPUP_SOURCE_UNSUPPORTED`. USDT only funds the balance; sellers are paid in USDC. Holding a native coin
 or sats? Use them to top up OpenRouter with ROZO Checkout (`create_deposit_order`, or https://checkout.rozo.ai).
 

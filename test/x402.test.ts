@@ -39,7 +39,10 @@ async function call(name: string, args: unknown, fetchFn: typeof fetch, authKey?
   const res = await handleMcp(req, fetchFn);
   expect(res.status).toBe(200);
   const out = (await res.json()) as any;
-  return { isError: Boolean(out.result.isError), text: out.result.content[0].text as string, payload: JSON.parse(out.result.content[0].text) };
+  const text = out.result.content[0].text as string;
+  let payload: any = null;
+  try { payload = JSON.parse(text); } catch { /* SDK input-validation errors are plain text */ }
+  return { isError: Boolean(out.result.isError), text, payload };
 }
 
 const baseReq = {
@@ -209,22 +212,43 @@ describe('x402_topup', () => {
     expect(topup.headers.authorization).toBe('Bearer ak_new_9876543210fedcba');
   });
 
-  it('uses the connection key, never echoes it, and accepts native coins on the topup leg', async () => {
+  it('uses the connection key, never echoes it, and accepts Arbitrum USDT', async () => {
     const { fn, calls } = mockFetch({
-      'POST /topup': () => reply({ orderId: 'ord_2', depositAddress: '0x2222222222222222222222222222222222222222', payAmount: '0.004', token: 'ETH', chain: '8453' }),
+      'POST /topup': () => reply({ orderId: 'ord_2', depositAddress: '0x2222222222222222222222222222222222222222', payAmount: '10.1', token: 'USDT', chain: '42161' }),
     });
-    const out = await call('x402_topup', { amount: '10', token: 'ETH', chain: '8453' }, fn, KEY);
+    const out = await call('x402_topup', { amount: '10', token: 'USDT', chain: '42161' }, fn, KEY);
     expect(out.isError).toBe(false);
     expect(calls.some((c) => c.url.endsWith('/keys'))).toBe(false);
     expect(out.text).not.toContain(KEY);
     expect(out.payload.agentKeyMasked).toBe('ak_...cdef');
   });
 
+  it('refuses native coins and BTC locally with a pointer to ROZO Checkout, without calling Rozo', async () => {
+    const { fn, calls } = mockFetch({});
+    for (const [token, chain] of [['ETH', '8453'], ['ETH', '42161'], ['BNB', '56'], ['SOL', '900'], ['BTC', '1'], ['sats', '900']]) {
+      const out = await call('x402_topup', { amount: '10', token, chain }, fn, KEY);
+      expect(out.isError).toBe(true);
+      expect(out.payload.error.code).toBe('X402_TOPUP_SOURCE_UNSUPPORTED');
+      expect(out.payload.error.message).toContain('USDC and USDT only');
+      expect(out.payload.error.message).toContain('create_deposit_order');
+    }
+    expect(calls.length).toBe(0);
+  });
+
+  it('does not offer lightning as a topup chain', async () => {
+    const { fn, calls } = mockFetch({});
+    const out = await call('x402_topup', { amount: '10', token: 'BTC', chain: 'lightning' }, fn, KEY);
+    expect(out.isError).toBe(true);
+    expect(out.text).toContain('USDC and USDT only');
+    expect(calls.length).toBe(0);
+  });
+
   it('refuses unknown coins, small amounts, and a blacklisted deposit address', async () => {
     const { fn } = mockFetch({
       'POST /topup': () => reply({ depositAddress: 'AEEtekA2EBYVy3e5Xx8fD3GkjWSoCsLvLzdD6pZTgHiH', payAmount: '20' }),
     });
-    expect((await call('x402_topup', { amount: '20', token: 'SOL', chain: '56' }, fn, KEY)).payload.error.code).toBe('UNSUPPORTED_SOURCE');
+    expect((await call('x402_topup', { amount: '20', token: 'USDT', chain: '8453' }, fn, KEY)).payload.error.code).toBe('UNSUPPORTED_SOURCE');
+    expect((await call('x402_topup', { amount: '20', token: 'DAI', chain: '1' }, fn, KEY)).payload.error.code).toBe('UNSUPPORTED_SOURCE');
     expect((await call('x402_topup', { amount: '4', token: 'USDC', chain: '900' }, fn, KEY)).payload.error.code).toBe('BAD_VALUE');
     expect((await call('x402_topup', { amount: '20', token: 'USDC', chain: '900' }, fn, KEY)).payload.error.code).toBe('BLACKLIST_HIT');
   });

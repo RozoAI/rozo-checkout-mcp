@@ -15,8 +15,13 @@
  *
  * Payment leg: USDC on Base (eip155:8453) only, x402 scheme "exact". Solana
  * USDC is still recognized (constants and v1 alias kept) but refused with a
- * "Solana payment leg is coming later" reason until that leg ships. Native
- * coins and USDT are topup-only.
+ * "Solana payment leg is coming later" reason until that leg ships. USDT is
+ * topup-only.
+ *
+ * Top ups accept USDC and USDT only (rozo-mpprouter parseTopupSource refuses
+ * Lightning and native coins with X402_TOPUP_SOURCE_UNSUPPORTED). Native coins
+ * and sats are for paying OpenRouter through ROZO Checkout
+ * (create_deposit_order), not for the x402 balance.
  */
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
@@ -36,18 +41,24 @@ export const USDC_ASSET: Record<string, string> = {
 };
 const V1_ALIASES: Record<string, string> = { base: NETWORK_BASE, solana: NETWORK_SOLANA };
 
-/** Topup coins: the checkout stablecoin set plus the native-coin beta set. */
+/**
+ * Topup coins: USDC and USDT only, mirroring the stablecoin source table the
+ * router accepts for /v1/x402/topup (rozo-mpprouter STABLE_SOURCES).
+ */
 export const TOPUP_SOURCES = [
-  { chain: '1', name: 'Ethereum', tokens: ['USDC', 'USDT', 'ETH'] },
-  { chain: '56', name: 'BNB Chain', tokens: ['USDC', 'USDT', 'BNB'] },
+  { chain: '1', name: 'Ethereum', tokens: ['USDC', 'USDT'] },
+  { chain: '56', name: 'BNB Chain', tokens: ['USDC', 'USDT'] },
   { chain: '137', name: 'Polygon', tokens: ['USDC', 'USDT'] },
-  { chain: '900', name: 'Solana', tokens: ['USDC', 'USDT', 'SOL'] },
-  { chain: '8453', name: 'Base', tokens: ['USDC', 'ETH'] },
-  { chain: '42161', name: 'Arbitrum', tokens: ['ETH'] },
+  { chain: '900', name: 'Solana', tokens: ['USDC', 'USDT'] },
+  { chain: '42161', name: 'Arbitrum', tokens: ['USDC', 'USDT'] },
+  { chain: '8453', name: 'Base', tokens: ['USDC'] },
   { chain: '1500', name: 'Stellar', tokens: ['USDC'] },
-  { chain: 'lightning', name: 'Bitcoin Lightning', tokens: ['BTC'] },
 ] as const;
 const TOPUP_CHAINS = TOPUP_SOURCES.map((s) => s.chain) as unknown as [string, ...string[]];
+/** Native coins and BTC: valid for ROZO Checkout, never for an x402 top up. */
+const NON_STABLE_TOKENS = new Set(['ETH', 'BNB', 'SOL', 'POL', 'MATIC', 'XLM', 'BTC', 'SATS']);
+export const TOPUP_STABLE_ONLY =
+  'x402 top ups accept USDC and USDT only. Holding a native coin or sats? Use create_deposit_order / ROZO Checkout to top up OpenRouter instead.';
 export const TOPUP_MIN_USD = 5;
 
 export const RETRYABLE_503 = new Set(['X402_RETRY', 'X402_PAYER_MODE_CHANGED', 'X402_LEDGER_UNAVAILABLE']);
@@ -191,7 +202,7 @@ function fromError(err: unknown): ToolResult {
   return fail('INTERNAL', 'Unexpected error.');
 }
 
-const PAY_LEG = 'The x402 payment leg is USDC on Base (eip155:8453) only, scheme "exact"; Solana payment leg is coming later. Native coins and USDT can fund the balance (x402_topup) but never pay a seller directly.';
+const PAY_LEG = 'The x402 payment leg is USDC on Base (eip155:8453) only, scheme "exact"; Solana payment leg is coming later. USDT can fund the balance (x402_topup) but never pays a seller directly.';
 
 const agentKeySchema = z
   .string()
@@ -205,15 +216,17 @@ export function registerX402Tools(server: McpServer, ctx: X402Context): void {
     {
       title: 'Top up the x402 balance',
       description:
-        'Fund a prepaid Rozo x402 balance with the coin you hold, through a one-time deposit address you pay from your own wallet. ' +
-        'Same fields as POST /v1/x402/topup: amount (USD), token, chain. Topup coins: USDC/USDT on Ethereum, BNB Chain, Polygon, Solana; USDC on Base, Stellar; BTC on Lightning; ' +
-        'native ETH (Ethereum, Base, Arbitrum), BNB and SOL in beta. ' +
+        'Fund a prepaid Rozo x402 balance with USDC or USDT, through a one-time deposit address you pay from your own wallet. ' +
+        'Same fields as POST /v1/x402/topup: amount (USD), token, chain. Topup coins: USDC/USDT on Ethereum, BNB Chain, Polygon, Solana, Arbitrum; USDC on Base, Stellar. ' +
+        'Native coins (ETH, BNB, SOL, ...) and BTC/Lightning are not accepted for top ups. Holding a native coin or sats? Use create_deposit_order / ROZO Checkout to top up OpenRouter instead. ' +
         PAY_LEG +
         ' Without an agent key, one is created and returned ONCE in this result: store it, it owns the balance. Minimum $5.',
       inputSchema: {
         amount: z.string().max(16).describe('USD amount to credit, e.g. "20". Minimum 5.'),
-        token: z.string().min(2).max(8).describe('Coin you will send: USDC, USDT, BTC, ETH, BNB or SOL.'),
-        chain: z.enum(TOPUP_CHAINS).describe('Chain id: "1" Ethereum, "56" BNB Chain, "137" Polygon, "900" Solana, "8453" Base, "42161" Arbitrum, "1500" Stellar, "lightning".'),
+        token: z.string().min(2).max(8).describe('Coin you will send: USDC or USDT (USDT not on Base or Stellar).'),
+        chain: z
+          .enum(TOPUP_CHAINS, { error: `chain must be one of ${TOPUP_CHAINS.join(', ')}. ${TOPUP_STABLE_ONLY}` })
+          .describe('Chain id: "1" Ethereum, "56" BNB Chain, "137" Polygon, "900" Solana, "42161" Arbitrum, "8453" Base, "1500" Stellar.'),
         agentKey: agentKeySchema,
       },
       annotations: { title: 'Top up the x402 balance', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
@@ -224,6 +237,9 @@ export function registerX402Tools(server: McpServer, ctx: X402Context): void {
         if (!/^\d+(\.\d{1,2})?$/.test(amt)) return fail('BAD_VALUE', 'amount must be a USD amount like "20" or "20.50".');
         if (Number(amt) < TOPUP_MIN_USD) return fail('BAD_VALUE', `Minimum topup is $${TOPUP_MIN_USD}.`);
         const tok = token.trim().toUpperCase();
+        if (NON_STABLE_TOKENS.has(tok)) {
+          return fail('X402_TOPUP_SOURCE_UNSUPPORTED', TOPUP_STABLE_ONLY, { topupSources: TOPUP_SOURCES });
+        }
         const row = TOPUP_SOURCES.find((s) => s.chain === chain);
         if (!row || !(row.tokens as readonly string[]).includes(tok)) {
           return fail('UNSUPPORTED_SOURCE', `${tok} on ${row?.name ?? chain} is not a topup coin.`, { topupSources: TOPUP_SOURCES });
@@ -253,8 +269,7 @@ export function registerX402Tools(server: McpServer, ctx: X402Context): void {
           return fail('X402_TOPUP_MISMATCH', `Rozo returned a deposit for a different coin (${short(gotToken, 12)} on chain ${short(gotChain, 12)}). Do not send anything; the address is withheld.`);
         }
         const address = pick(resp, 'depositAddress', 'receiverAddress', 'address', 'deposit.address');
-        const lnInvoice = pick(resp, 'lnInvoice', 'invoice', 'deposit.lnInvoice');
-        if (!address && !lnInvoice) return fail('X402_BAD_TOPUP', 'Rozo returned a topup order without a deposit address.');
+        if (!address) return fail('X402_BAD_TOPUP', 'Rozo returned a topup order without a deposit address.');
         if (address && isBlacklisted(address)) {
           return fail('BLACKLIST_HIT', 'The deposit address matches a known compromised address. Do NOT send anything.');
         }
@@ -273,12 +288,11 @@ export function registerX402Tools(server: McpServer, ctx: X402Context): void {
             amount: pick(resp, 'payAmount', 'amountToSend', 'deposit.amount', 'amount'),
             address,
             memo,
-            lnInvoice,
           },
           creditUsd: pick(resp, 'creditUsd', 'credit', 'amountUsd') ?? amt,
           expiresAt: pick(resp, 'expiresAt', 'deposit.expiresAt'),
           instructions: [
-            'Send exactly deposit.amount of deposit.token on deposit.chain to deposit.address (or pay deposit.lnInvoice), once, from your own wallet.',
+            'Send exactly deposit.amount of deposit.token on deposit.chain to deposit.address, once, from your own wallet.',
             memo ? 'Include the memo exactly as given.' : 'No memo is used for this deposit.',
             'The balance is credited after the deposit confirms. Then pay x402 endpoints with x402_sign.',
           ],
