@@ -52,7 +52,7 @@ const baseReq = {
 };
 
 describe('tool descriptions', () => {
-  it('state the Base USDC and Solana USDC payment leg', async () => {
+  it('state the Base USDC only payment leg, Solana coming later', async () => {
     const { fn } = mockFetch({});
     const req = new Request('https://mcp.rozo.ai/mcp', {
       method: 'POST',
@@ -62,8 +62,9 @@ describe('tool descriptions', () => {
     const tools = ((await (await handleMcp(req, fn)).json()) as any).result.tools as any[];
     for (const name of ['x402_topup', 'x402_sign']) {
       const t = tools.find((x) => x.name === name);
-      expect(t.description).toMatch(/USDC on Base/);
-      expect(t.description).toMatch(/USDC on Solana/);
+      expect(t.description).toMatch(/USDC on Base \(eip155:8453\) only/);
+      expect(t.description).not.toMatch(/USDC on Solana/);
+      expect(t.description).toMatch(/Solana payment leg is coming later/);
     }
     const sign = tools.find((x) => x.name === 'x402_sign');
     expect(sign.inputSchema.required.sort()).toEqual(['accepts', 'budget', 'idempotencyKey']);
@@ -86,15 +87,29 @@ describe('x402_sign', () => {
     expect(out.text).not.toContain(KEY);
   });
 
-  it('accepts a Solana USDC requirement and v1 short names; v1 uses X-PAYMENT', async () => {
+  it('accepts v1 short names for Base; v1 uses X-PAYMENT', async () => {
     const { fn } = mockFetch({ 'POST /sign': () => reply({ paymentSignature: 'S' }) });
-    const sol = { ...baseReq, network: 'solana', asset: USDC_ASSET[NETWORK_SOLANA], payTo: SOL_DEPOSIT, amount: undefined, maxAmountRequired: '500' };
-    const out = await call('x402_sign', { accepts: [sol], budget: '1', idempotencyKey: IDEM, x402Version: 1, agentKey: KEY }, fn);
+    const v1 = { ...baseReq, network: 'base', amount: undefined, maxAmountRequired: '500' };
+    const out = await call('x402_sign', { accepts: [v1], budget: '1', idempotencyKey: IDEM, x402Version: 1, agentKey: KEY }, fn);
     expect(out.isError).toBe(false);
     expect(out.payload.headerName).toBe('X-PAYMENT');
   });
 
-  it('refuses anything but exact USDC on Base or Solana, without calling Rozo', async () => {
+  it('refuses Solana USDC (v2 CAIP-2 and v1 short name) as coming later, without calling Rozo', async () => {
+    const { fn, calls } = mockFetch({ 'POST /sign': () => reply({ paymentSignature: 'S' }) });
+    for (const sol of [
+      { ...baseReq, network: NETWORK_SOLANA, asset: USDC_ASSET[NETWORK_SOLANA], payTo: SOL_DEPOSIT },
+      { ...baseReq, network: 'solana', asset: USDC_ASSET[NETWORK_SOLANA], payTo: SOL_DEPOSIT, amount: undefined, maxAmountRequired: '500' },
+    ]) {
+      const out = await call('x402_sign', { accepts: [sol], budget: '1', idempotencyKey: IDEM, agentKey: KEY }, fn);
+      expect(out.isError).toBe(true);
+      expect(out.payload.error.code).toBe('X402_UNSUPPORTED');
+      expect(out.payload.error.message).toMatch(/Solana payment leg is coming later/);
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  it('refuses anything but exact USDC on Base, without calling Rozo', async () => {
     const { fn, calls } = mockFetch({});
     for (const bad of [
       { ...baseReq, network: 'eip155:1' },
@@ -129,12 +144,12 @@ describe('x402_sign', () => {
     expect(calls).toHaveLength(0);
   });
 
-  it('turns 503 into "x402 payer not enabled yet"', async () => {
+  it('turns 503 into "x402 payer not enabled"', async () => {
     const { fn } = mockFetch({ 'POST /sign': () => reply({}, 503) });
     const out = await call('x402_sign', { accepts: [baseReq], budget: '1', idempotencyKey: IDEM }, fn, KEY);
     expect(out.isError).toBe(true);
     expect(out.payload.error.code).toBe('X402_PAYER_DISABLED');
-    expect(out.payload.error.message).toMatch(/x402 payer not enabled yet/);
+    expect(out.payload.error.message).toMatch(/x402 payer not enabled/);
   });
 
   it('on an upstream failure hands back the idempotencyKey to retry with', async () => {
@@ -214,7 +229,7 @@ describe('x402_topup', () => {
     expect((await call('x402_topup', { amount: '20', token: 'USDC', chain: '900' }, fn, KEY)).payload.error.code).toBe('BLACKLIST_HIT');
   });
 
-  it('turns 503 into "x402 payer not enabled yet"', async () => {
+  it('turns 503 into "x402 payer not enabled"', async () => {
     const { fn } = mockFetch({ 'POST /topup': () => reply({}, 503) });
     const out = await call('x402_topup', { amount: '20', token: 'USDC', chain: '900' }, fn, KEY);
     expect(out.payload.error.code).toBe('X402_PAYER_DISABLED');
