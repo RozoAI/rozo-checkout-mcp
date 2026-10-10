@@ -54,14 +54,22 @@ async function rpc(method: string, params: unknown, fetchFn: typeof fetch, src =
 }
 
 describe('tools/list', () => {
-  it('exposes four read-only tools with titles and JSON schemas', async () => {
+  it('exposes the checkout tools and the two x402 tools with titles and JSON schemas', async () => {
     const { fn } = mockFetch();
     const out = await rpc('tools/list', {}, fn);
     const tools = out.result.tools as any[];
-    expect(tools.map((t) => t.name).sort()).toEqual(['create_deposit_order', 'payment_status', 'quote_invoice', 'supported_coins']);
+    expect(tools.map((t) => t.name).sort()).toEqual([
+      'create_deposit_order',
+      'payment_status',
+      'quote_invoice',
+      'supported_coins',
+      'x402_sign',
+      'x402_topup',
+    ]);
+    const writers = ['create_deposit_order', 'x402_sign', 'x402_topup'];
     for (const t of tools) {
       expect(t.title).toBeTruthy();
-      expect(t.annotations.readOnlyHint).toBe(t.name !== 'create_deposit_order');
+      expect(t.annotations.readOnlyHint).toBe(!writers.includes(t.name));
       expect(t.annotations.destructiveHint).toBe(false);
       expect(t.inputSchema.type).toBe('object');
     }
