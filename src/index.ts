@@ -1,12 +1,13 @@
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { srcFromRequestUrl } from './attribution';
 import { buildServer } from './server';
+import { agentKeyFromRequest } from './x402';
 import { SERVER_NAME, VERSION } from './version';
 
 const CORS = {
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET, POST, OPTIONS',
-  'access-control-allow-headers': 'content-type, accept, mcp-session-id, mcp-protocol-version, last-event-id',
+  'access-control-allow-headers': 'content-type, accept, authorization, mcp-session-id, mcp-protocol-version, last-event-id',
   'access-control-expose-headers': 'mcp-session-id, mcp-protocol-version',
 };
 
@@ -22,7 +23,13 @@ function json(body: unknown, status = 200): Response {
 
 export async function handleMcp(request: Request, fetchFn: typeof fetch = fetch): Promise<Response> {
   // Stateless: a fresh server + transport per request, no session ids.
-  const server = buildServer({ fetchFn: (u, i) => fetchFn(u, i), src: srcFromRequestUrl(request.url) });
+  // The optional x402 agent key travels as "Authorization: Bearer ak_..." on the
+  // MCP request. It is forwarded to Rozo's x402 API only and never stored.
+  const server = buildServer({
+    fetchFn: (u, i) => fetchFn(u, i),
+    src: srcFromRequestUrl(request.url),
+    agentKey: agentKeyFromRequest(request),
+  });
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,

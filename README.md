@@ -19,7 +19,9 @@ This server holds no private keys, signs nothing and sends nothing. It only:
 3. reads order status.
 
 The user pays from their own wallet. An order that is never funded expires and costs nothing.
-There are no secrets, no auth and no stored state; each request is handled statelessly.
+There are no secrets and no stored state; each request is handled statelessly. The two x402 tools
+are the one exception to "no auth": they forward the caller's own agent key (see below) to Rozo and
+nothing else.
 
 ## Tools
 
@@ -29,6 +31,25 @@ There are no secrets, no auth and no stored state; each request is handled state
 | `quote_invoice` | `{ url }` | Merchant, invoice amount, what the payer pays, link expiry, and whether the link is still payable. Creates nothing. |
 | `create_deposit_order` | `{ url, chainId, tokenSymbol, email? }` | Creates a one-time deposit order; you pay from your own wallet. Returns the deposit address (or BOLT11 invoice for Lightning), the exact amount, any required memo, `expiresAt` and `rozoPaymentId`. The optional `email` is a contact address stored with the order so ROZO can reach the payer if the payment needs attention; an invalid one is refused with `INVALID_EMAIL` and nothing is created. |
 | `payment_status` | `{ rozoPaymentId }` | Pay-in, bridging/payout progress, and whether the Coinbase invoice settled. |
+| `x402_topup` | `{ amount, token, chain, agentKey? }` | Fund a prepaid Rozo x402 balance with the coin you hold (one-time deposit address, you pay from your own wallet). Without an agent key, one is created and returned once. |
+| `x402_sign` | `{ accepts, budget, idempotencyKey, x402Version?, resource?, agentKey? }` | For one requirement from an x402 `402` challenge, returns the `PAYMENT-SIGNATURE` value paid from that balance. You make and replay the HTTP request yourself. |
+
+### x402 tools
+
+Same fields as the HTTP API (`POST /v1/x402/topup`, `POST /v1/x402/sign`). The **payment leg is USDC on
+Base (`eip155:8453`) and USDC on Solana mainnet only**, x402 scheme `exact`; anything else is refused
+with `X402_UNSUPPORTED` before Rozo is called. Native ETH (Ethereum, Base, Arbitrum), BNB and SOL, plus
+USDT, can fund the balance but never pay a seller directly.
+
+- Agent key: set it once on the connection as `Authorization: Bearer ak_...`
+  (`claude mcp add --transport http rozo-checkout <url> --header "Authorization: Bearer ak_..."`), or pass
+  `agentKey` per call. The server never stores it and never echoes it, except the one time
+  `x402_topup` creates it.
+- Idempotency: generate one UUID per payment and reuse it on every retry of `x402_sign`; the same key
+  returns the same signature instead of charging twice. Error results carry the key back.
+- A `503` from Rozo is reported as `X402_PAYER_DISABLED` ("x402 payer not enabled yet"): nothing was
+  charged.
+- `payTo` and topup deposit addresses are checked against the compromised-address list.
 
 `create_deposit_order` applies the same guards as the CLI before it returns a deposit address:
 link payability (not used, not expired, v3 session still `CREATED`), an existing order must be
@@ -41,6 +62,7 @@ Upstream endpoints (identical request shapes to the CLI, all keyless):
 - `POST https://apiserver.mpprouter.dev/v1/services/rozo-agent-api/create-invoice`
 - `GET  https://apiserver.mpprouter.dev/v1/services/rozo-agent-api/invoice-status?rozo_payment_id=...`
 - `GET  https://intentapiv4.rozo.ai/functions/v1/payment-api/payments/<uuid>` (read-only)
+- `POST https://apiserver.mpprouter.dev/v1/x402/keys`, `/v1/x402/topup`, `/v1/x402/sign` (x402 tools, Bearer agent key)
 
 ## Support
 
