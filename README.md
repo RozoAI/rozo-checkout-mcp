@@ -31,15 +31,17 @@ nothing else.
 | `quote_invoice` | `{ url }` | Merchant, invoice amount, what the payer pays, link expiry, and whether the link is still payable. Creates nothing. |
 | `create_deposit_order` | `{ url, chainId, tokenSymbol, email? }` | Creates a one-time deposit order; you pay from your own wallet. Returns the deposit address (or BOLT11 invoice for Lightning), the exact amount, any required memo, `expiresAt` and `rozoPaymentId`. The optional `email` is a contact address stored with the order so ROZO can reach the payer if the payment needs attention; an invalid one is refused with `INVALID_EMAIL` and nothing is created. |
 | `payment_status` | `{ rozoPaymentId }` | Pay-in, bridging/payout progress, and whether the Coinbase invoice settled. |
-| `x402_topup` | `{ amount, token, chain, agentKey? }` | Fund a prepaid Rozo x402 balance with the coin you hold (one-time deposit address, you pay from your own wallet). Without an agent key, one is created and returned once. |
+| `x402_topup` | `{ amount, token, chain, agentKey? }` | Fund a prepaid Rozo x402 balance with USDC or USDT (one-time deposit address, you pay from your own wallet). Without an agent key, one is created and returned once. |
 | `x402_sign` | `{ accepts, budget, idempotencyKey, x402Version?, resource?, agentKey? }` | For one requirement from an x402 `402` challenge, returns the `PAYMENT-SIGNATURE` value paid from that balance. You make and replay the HTTP request yourself. |
 
 ### x402 tools
 
 Same fields as the HTTP API (`POST /v1/x402/topup`, `POST /v1/x402/sign`). The **payment leg is USDC on
 Base (`eip155:8453`) only**, x402 scheme `exact`; anything else is refused with `X402_UNSUPPORTED`
-before Rozo is called. Solana payment leg is coming later. Native ETH (Ethereum, Base, Arbitrum), BNB and SOL, plus
-USDT, can fund the balance but never pay a seller directly.
+before Rozo is called. Solana payment leg is coming later. Top ups take USDT on Solana, BNB Chain, Ethereum,
+Polygon and USDC on Solana, BNB Chain, Ethereum, Polygon, Base, Stellar; any other coin is answered with
+`X402_TOPUP_SOURCE_UNSUPPORTED`. USDT only funds the balance; sellers are paid in USDC. Holding a native coin
+or sats? Use them to top up OpenRouter with ROZO Checkout (`create_deposit_order`, or https://checkout.rozo.ai).
 
 - Agent key: set it once on the connection as `Authorization: Bearer ak_...`
   (`claude mcp add --transport http rozo-checkout <url> --header "Authorization: Bearer ak_..."`), or pass
