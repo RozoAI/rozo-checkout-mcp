@@ -83,6 +83,27 @@ Upstream endpoints (identical request shapes to the CLI, all keyless):
 - `GET  https://intentapiv4.rozo.ai/functions/v1/payment-api/payments/<uuid>` (read-only)
 - `POST https://apiserver.mpprouter.dev/v1/x402/keys`, `/v1/x402/topup`, `/v1/x402/sign` (x402 tools, Bearer agent key)
 
+### Stellar wallet tools
+
+Fund a Stellar address with USDC (and optionally XLM) from one stablecoin payment. Keyless: calls `payment-api /funding/*` as the public app, rate limited per IP. The server never asks for or holds a Stellar secret key or an EVM key: your own wallet pays the deposit and signs the Stellar transaction.
+
+| Tool | Input | Output |
+| --- | --- | --- |
+| `funding_capabilities` | none | whether `stellar_onboarding` is on, source chains/assets, `usdGas` options (XLM), limits, accepted deposit tokens |
+| `stellar_wallet_quote` | `receiverAddress` (G...), `sourceChain` (`base`, `ethereum`, `arbitrum`, `polygon`), `amountUsd`, optional `usdGas` (`"0"`, `"0.5"`, `"1"`) | `quoteId`, `planDigest`, `expiresAt`, USDC minimum and XLM received, `fees`, `totals`, `signatureNeeded` |
+| `stellar_wallet_create_order` | `quoteId`, `planDigest`, `orderId` (8 to 128 chars, reused as the Idempotency-Key) | `fundingId`, deposit `address`, exact `amount`, `payBefore`, accepted chains and tokens |
+| `stellar_wallet_order_status` | `fundingId` | `status`, `pendingActions`, per-leg status and tx hashes, guidance |
+| `stellar_wallet_get_signing_request` | `fundingId`, `walletAddress` | `signingRequestId`, unsigned `xdr`, `operations`, `expiresAt` |
+| `stellar_wallet_submit_signed` | `signingRequestId`, `signedXdr` | submit status and tx hash |
+
+Rules the tools enforce and repeat to the agent:
+
+- Fees come from the quote (`fees`, `totals`). Nothing is hardcoded here.
+- The receiving address signs one transaction, only when it is new or has no USDC trustline.
+- The one-time deposit address is the same on Base, Ethereum, Arbitrum and Polygon; USDC or USDT is accepted 1:1.
+- Pay the exact amount once, before `payBefore`. Retrying `stellar_wallet_create_order` with the same `orderId` returns the same order.
+- A value that looks like a Stellar secret key (`S...`) is refused and never sent upstream.
+
 ## Support
 
 If an order is stuck or anything goes wrong: email hi@rozo.ai, X https://x.com/ROZOai, Discord https://discord.gg/EfWejgTbuU. Tool results carry the same channels in a `support` block.

@@ -61,13 +61,19 @@ describe('tools/list', () => {
     const tools = out.result.tools as any[];
     expect(tools.map((t) => t.name).sort()).toEqual([
       'create_deposit_order',
+      'funding_capabilities',
       'payment_status',
       'quote_invoice',
+      'stellar_wallet_create_order',
+      'stellar_wallet_get_signing_request',
+      'stellar_wallet_order_status',
+      'stellar_wallet_quote',
+      'stellar_wallet_submit_signed',
       'supported_coins',
       'x402_sign',
       'x402_topup',
     ]);
-    const writers = ['create_deposit_order', 'x402_sign', 'x402_topup'];
+    const writers = ['create_deposit_order', 'x402_sign', 'x402_topup', 'stellar_wallet_create_order', 'stellar_wallet_get_signing_request', 'stellar_wallet_submit_signed'];
     for (const t of tools) {
       expect(t.title).toBeTruthy();
       expect(t.annotations.readOnlyHint).toBe(!writers.includes(t.name));

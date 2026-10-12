@@ -7,8 +7,9 @@
  *   deposit GET   {INTENTS}/payments/<uuid>    keyless, read-only
  *
  * No credential is ever attached: there is nowhere in this client to put one.
- * This server never writes to payment-api; order creation goes through
- * mpprouter only, exactly like the CLI.
+ * The checkout tools never write to payment-api; their order creation goes
+ * through mpprouter only, exactly like the CLI. The separate Stellar wallet
+ * funding tools (src/funding.ts) use payment-api /funding/* keylessly.
  */
 import { attributionFields } from './attribution';
 import { CLIENT_LABEL } from './version';
