@@ -2,7 +2,18 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { UpstreamError, type Api } from './api';
 import { isBlacklisted } from './blacklist';
-import { CHAIN_IDS, SUPPORTED_SOURCES, chainName, isSupportedSource } from './coins';
+import {
+  CHAIN_IDS,
+  NATIVE_MAX_USD,
+  NATIVE_MIN_USD_FALLBACK,
+  SUPPORTED_SOURCES,
+  chainName,
+  isNativeSource,
+  isSupportedSource,
+  offeredSources,
+  toBaseUnits,
+  tokenDecimals,
+} from './coins';
 import { InputError, assertRozoPaymentId, parseCoinbaseLink } from './ids';
 import { SUPPORT, normalizeContactEmail } from './support';
 
@@ -60,7 +71,7 @@ export function quoteSnapshot(quote: any) {
     merchant: str(quote?.merchant),
     invoiceAmount: str(quote?.invoice?.amount),
     fiat: str(quote?.invoice?.fiat),
-    callerPays: str(quote?.quote?.callerPays),
+    callerPays: str(quote?.quote?.callerPays ?? quote?.callerPays),
     coinbase: cb
       ? {
           status: str(cb.status),
@@ -101,6 +112,21 @@ function moneyDetected(source: any, status: unknown): boolean {
   );
 }
 
+function isOffered(offered: readonly { chainId: string; tokens: readonly string[] }[], chainId: string, token: string): boolean {
+  return Boolean(offered.find((s) => s.chainId === chainId)?.tokens.includes(token));
+}
+
+/** USD minimum for a native coin: the quote's nativeMinUsd, else the built-in floor. */
+function nativeMinUsd(quote: any, chainId: string, symbol: string): number {
+  const v = Number(quote?.nativeMinUsd?.[chainId]?.[symbol]);
+  return Number.isFinite(v) && v > 0 ? v : (NATIVE_MIN_USD_FALLBACK[chainId] ?? 0);
+}
+
+const NATIVE_NOTE =
+  'Native coins (ETH on Ethereum, Base, Arbitrum; BNB on BNB Chain; POL on Polygon; SOL on Solana) are exact-out like Lightning: ' +
+  'the order states the exact coin amount, priced at the current rate plus an FX spread on top of the service fee, and that price holds only until quoteExpiresAt. ' +
+  `Native orders are capped at $${NATIVE_MAX_USD} per invoice (native ETH on Ethereum needs at least $1), and a native coin is offered only when quote_invoice lists it for that invoice.`;
+
 const linkUrlSchema = z
   .string()
   .max(512)
@@ -113,11 +139,13 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     'supported_coins',
     {
       title: 'Supported coins',
-      description: 'List the coins and chains you can pay an OpenRouter (Coinbase) invoice with through Rozo. Static list, no network call.',
+      description:
+        'List the coins and chains you can pay an OpenRouter (Coinbase) invoice with through Rozo: USDC/USDT, native coins and BTC over Lightning, with token decimals. Static list, no network call; quote_invoice tells which native coins a given invoice accepts. ' +
+        NATIVE_NOTE,
       inputSchema: {},
       annotations: { title: 'Supported coins', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async () => ok({ supportedSources: SUPPORTED_SOURCES }),
+    async () => ok({ supportedSources: SUPPORTED_SOURCES, native: NATIVE_NOTE }),
   );
 
   server.registerTool(
@@ -125,14 +153,15 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     {
       title: 'Quote a Coinbase invoice',
       description:
-        'Look up a Coinbase payment link (e.g. an OpenRouter top-up) and return the merchant, invoice amount, what the payer pays, the link expiry and whether it is still payable. Creates nothing and moves no funds.',
+        'Look up a Coinbase payment link (e.g. an OpenRouter top-up) and return the merchant, invoice amount, what the payer pays, the link expiry, whether it is still payable and supportedSources: the coins THIS invoice can be paid with. Offer a native coin (ETH, BNB, POL, SOL) only when it appears there. Creates nothing and moves no funds.',
       inputSchema: { url: linkUrlSchema },
       annotations: { title: 'Quote a Coinbase invoice', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     async ({ url }) => {
       try {
         const link = parseCoinbaseLink(url);
-        const snap = quoteSnapshot(await ctx.api.quoteInvoice(link.url));
+        const quote = await ctx.api.quoteInvoice(link.url);
+        const snap = quoteSnapshot(quote);
         const p = derivePayable(snap, now());
         return ok({
           payable: p.payable,
@@ -140,7 +169,9 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
           ...snap,
           linkId: snap.linkId ?? link.linkId,
           linkKind: link.kind,
-          supportedSources: SUPPORTED_SOURCES,
+          supportedSources: offeredSources(quote?.supportedSources),
+          nativeMinUsd: quote?.nativeMinUsd && typeof quote.nativeMinUsd === 'object' ? quote.nativeMinUsd : null,
+          nativeMaxUsd: NATIVE_MAX_USD,
           next: p.payable ? 'Call create_deposit_order with this url and the coin you hold.' : null,
         });
       } catch (err) {
@@ -154,11 +185,19 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     {
       title: 'Create a deposit order',
       description:
-        'Creates a one-time deposit order; you pay from your own wallet. Returns the deposit address (or Lightning invoice), the exact amount to send, any required memo, the expiry and the rozoPaymentId. This server holds no keys and sends nothing. Send exactly the amount, on exactly that chain and token, before expiresAt. An unfunded order simply expires at no cost.',
+        'Creates a one-time deposit order; you pay from your own wallet. Returns the deposit address (or Lightning invoice), the exact amount to send (also in base units with the token decimals), any required memo, the expiry and the rozoPaymentId. This server holds no keys and sends nothing. Send exactly the amount, on exactly that chain and token, before expiresAt. An unfunded order simply expires at no cost. ' +
+        'For a native coin the result also carries quoteExpiresAt (the end of the price lock, which expiresAt equals): send the exact coin amount before it. ' +
+        NATIVE_NOTE,
       inputSchema: {
         url: linkUrlSchema,
-        chainId: z.enum(CHAIN_IDS).describe('Source chain id from supported_coins, e.g. "900" (Solana), "8453" (Base), "lightning".'),
-        tokenSymbol: z.string().min(2).max(8).describe('Token you will pay with, e.g. USDC, USDT, BTC.'),
+        chainId: z
+          .enum(CHAIN_IDS)
+          .describe('Source chain id from supported_coins: "1" Ethereum, "56" BNB Chain, "137" Polygon, "42161" Arbitrum, "900" Solana, "8453" Base, "1500" Stellar, "lightning".'),
+        tokenSymbol: z
+          .string()
+          .min(2)
+          .max(8)
+          .describe('Token you will pay with: USDC, USDT, BTC (Lightning), or the chain native coin ETH (1, 8453, 42161), BNB (56), POL (137), SOL (900).'),
         email: z
           .string()
           .max(320)
@@ -186,6 +225,26 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
         const snap = quoteSnapshot(quote);
         const p = derivePayable(snap, now());
         if (!p.payable) return fail(p.code!, p.reason!);
+
+        // 1b. native coins: offered for this invoice, within the USD limits
+        const native = isNativeSource(chainId, token);
+        if (native) {
+          const offered = offeredSources(quote?.supportedSources);
+          if (!isOffered(offered, chainId, token)) {
+            return fail('NATIVE_NOT_OFFERED', `${token} on ${chainName(chainId)} is not offered for this invoice. Pick a coin from supportedSources.`, {
+              supportedSources: offered,
+            });
+          }
+          // callerPays missing: the backend stays the gate for the USD limits.
+          const usd = snap.callerPays === null ? NaN : Number(snap.callerPays);
+          if (Number.isFinite(usd) && usd > NATIVE_MAX_USD) {
+            return fail('NATIVE_OVER_LIMIT', `Native orders are limited to $${NATIVE_MAX_USD} per invoice; this one is $${snap.callerPays}. Pay with USDC or USDT.`);
+          }
+          const min = nativeMinUsd(quote, chainId, token);
+          if (Number.isFinite(usd) && usd < min) {
+            return fail('NATIVE_UNDER_MINIMUM', `${token} on ${chainName(chainId)} needs at least $${min}; this invoice is $${snap.callerPays}. Pay with USDC or USDT.`);
+          }
+        }
 
         // 2. create (or reuse) the order through mpprouter
         const created = await ctx.api.createInvoice({
@@ -231,15 +290,38 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
         if (chainId === '1500' && !memo) return fail('DEPOSIT_INCOMPLETE', 'A Stellar deposit requires a memo, but none was returned.', base);
         if (isBlacklisted(address)) return fail('BLACKLIST_HIT', 'The deposit address matches a known compromised address. Do NOT send anything.', base);
 
-        // 4. expiry floor on both clocks
+        // 3b. amount in base units, with the token's on-chain decimals
+        const decimals = lightning ? null : tokenDecimals(chainId, token);
+        const amountBaseUnits = decimals === null ? null : toBaseUnits(amount, decimals);
+        if (native && amountBaseUnits === null) {
+          return fail('DEPOSIT_INCOMPLETE', `The order amount ${amount} cannot be expressed in ${token} base units. Do not fund it.`, base);
+        }
+
+        // 4. expiry floor on every clock: order, Coinbase link and, for a
+        // native coin, the price lock (the order itself stays open longer).
         const intentExp = parseTime(payment?.expiresAt);
         if (intentExp === null) {
           return fail('EXPIRY_UNPARSABLE', 'The order expiry is missing or unparsable; refusing to hand out a deposit address.', base);
         }
-        const deadline = Math.min(intentExp, p.expiryMs ?? Infinity);
+        let quoteExp: number | null = null;
+        if (native) {
+          quoteExp = parseTime(payment?.quoteExpiresAt ?? created?.quoteExpiresAt);
+          if (quoteExp === null) {
+            return fail('EXPIRY_UNPARSABLE', 'This native order carries no quoteExpiresAt (price lock); refusing to hand out a deposit address.', base);
+          }
+          if (quoteExp - now() < MIN_REMAINING_MS) {
+            return fail(
+              'QUOTE_EXPIRED',
+              'The price lock on this native order has ended or has less than 10 minutes left. Do not fund it: a late payment is valued at the arrival price and may need manual review. Pay with USDC or USDT, or retry later for a fresh order.',
+              { ...base, quoteExpiresAt: new Date(quoteExp).toISOString() },
+            );
+          }
+        }
+        const deadline = Math.min(intentExp, p.expiryMs ?? Infinity, quoteExp ?? Infinity);
         if (!Number.isFinite(deadline) || deadline - now() < MIN_REMAINING_MS) {
           return fail('NOT_ENOUGH_TIME', 'Less than 10 minutes remain on the order or the Coinbase link. Ask for a fresh link; do not fund this order.', base);
         }
+        const deadlineIso = new Date(deadline).toISOString();
 
         return ok({
           ...base,
@@ -258,15 +340,24 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
             lnInvoice: lightning ? bolt11 : null,
             amount,
             amountUnit: str(source.amountUnit) ?? (lightning ? 'sats' : token),
+            decimals,
+            amountBaseUnits,
+            native,
+            exactOut: native || lightning,
           },
-          expiresAt: new Date(deadline).toISOString(),
+          expiresAt: deadlineIso,
+          ...(native ? { quoteExpiresAt: deadlineIso, priceLockedUntil: deadlineIso } : {}),
           // True only when the email went out with a NEW order: the router never
           // attaches one to a reused order. The address is never echoed.
           contactEmailProvided: Boolean(email) && !base.reused,
           instructions: [
-            'Send EXACTLY deposit.amount of deposit.tokenSymbol on deposit.chain to deposit.payTo, from your own wallet.',
+            native
+              ? `Send EXACTLY ${amount} ${token} (${amountBaseUnits} base units, ${decimals} decimals) on ${chainName(chainId)} to deposit.payTo, from your own wallet, before ${deadlineIso} (quoteExpiresAt). The price is locked only until then; do not send after it.`
+              : 'Send EXACTLY deposit.amount of deposit.tokenSymbol on deposit.chain to deposit.payTo, from your own wallet.',
             memo ? 'Include the memo exactly as given (TEXT memo). Without it the funds will likely be lost.' : 'No memo is used for this deposit.',
-            'The amount can exceed the invoice: it includes bridge and network fees.',
+            native
+              ? 'This is a native coin order: the coin amount includes the service fee plus an FX spread. Pay it from the chain native balance, not a wrapped token.'
+              : 'The amount can exceed the invoice: it includes bridge and network fees.',
             'Then poll payment_status with rozoPaymentId. Never send a second time for the same order.',
             `If anything goes wrong, contact ROZO: ${SUPPORT.email}, X ${SUPPORT.x}, Discord ${SUPPORT.discord}.`,
           ],
@@ -307,6 +398,8 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
           coinbaseStatus: str(router?.coinbase?.status),
           routerState: str(typeof router?.routerState === 'string' ? router.routerState : router?.routerState?.status),
           expiresAt: str(payment?.expiresAt),
+          // Native orders only: end of the price lock (the order stays open longer).
+          quoteExpiresAt: str(payment?.quoteExpiresAt),
           payin: {
             chainId: str(source.chainId),
             tokenSymbol: str(source.tokenSymbol),

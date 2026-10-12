@@ -4,9 +4,23 @@ A small remote [MCP](https://modelcontextprotocol.io) server that lets an AI age
 OpenRouter top-up (a Coinbase payment link, `payments.coinbase.com/payment-links/pl_*` or
 `payment-sessions/paymentSession_*`) with the coin they already hold:
 
-- USDC or USDT on Solana, BNB Chain, Ethereum, Polygon
+- USDC or USDT on Ethereum, BNB Chain, Polygon, Arbitrum, Solana
 - USDC on Base or Stellar
+- native ETH on Ethereum, Base or Arbitrum; BNB on BNB Chain; POL on Polygon; SOL on Solana
 - BTC over Lightning
+
+### Native coins
+
+A native coin order is exact-out, like Lightning: the order states the exact coin amount to send
+(`deposit.amount`, also given as `deposit.amountBaseUnits` with `deposit.decimals`: 18 for ETH, BNB
+and POL, 9 for SOL), and that price is locked only until `quoteExpiresAt`. The coin amount includes an
+FX spread on top of the service fee. Native orders are limited to $2,000 per invoice, and native ETH on
+Ethereum needs at least $1. A native coin is offered for an invoice only when `quote_invoice` lists it
+in that invoice's `supportedSources`; `create_deposit_order` refuses it otherwise
+(`NATIVE_NOT_OFFERED`), above the cap (`NATIVE_OVER_LIMIT`) or below the minimum
+(`NATIVE_UNDER_MINIMUM`). For a native order, `expiresAt` equals `quoteExpiresAt`: send before it.
+If the price lock has under 10 minutes left the tool refuses with `QUOTE_EXPIRED` and hands out no
+address.
 
 It runs as a Cloudflare Worker and speaks MCP streamable HTTP at `/mcp`.
 
@@ -27,9 +41,9 @@ nothing else.
 
 | Tool | Input | What it does |
 | --- | --- | --- |
-| `supported_coins` | none | Static list of supported chains and tokens (mirrors the `@rozoai/checkout` CLI). |
-| `quote_invoice` | `{ url }` | Merchant, invoice amount, what the payer pays, link expiry, and whether the link is still payable. Creates nothing. |
-| `create_deposit_order` | `{ url, chainId, tokenSymbol, email? }` | Creates a one-time deposit order; you pay from your own wallet. Returns the deposit address (or BOLT11 invoice for Lightning), the exact amount, any required memo, `expiresAt` and `rozoPaymentId`. The optional `email` is a contact address stored with the order so ROZO can reach the payer if the payment needs attention; an invalid one is refused with `INVALID_EMAIL` and nothing is created. |
+| `supported_coins` | none | Static list of supported chains and tokens, with each token's on-chain decimals and the chain's native coin. |
+| `quote_invoice` | `{ url }` | Merchant, invoice amount, what the payer pays, link expiry, whether the link is still payable, and `supportedSources` for this invoice (native coins only when the backend offers them for it). Creates nothing. |
+| `create_deposit_order` | `{ url, chainId, tokenSymbol, email? }` | Creates a one-time deposit order; you pay from your own wallet. Returns the deposit address (or BOLT11 invoice for Lightning), the exact amount (and in base units), any required memo, `expiresAt` (plus `quoteExpiresAt` for a native coin) and `rozoPaymentId`. The optional `email` is a contact address stored with the order so ROZO can reach the payer if the payment needs attention; an invalid one is refused with `INVALID_EMAIL` and nothing is created. |
 | `payment_status` | `{ rozoPaymentId }` | Pay-in, bridging/payout progress, and whether the Coinbase invoice settled. |
 | `x402_topup` | `{ amount, token, chain, agentKey? }` | Fund a prepaid Rozo x402 balance with USDC or USDT (one-time deposit address, you pay from your own wallet). Without an agent key, one is created and returned once. |
 | `x402_sign` | `{ accepts, budget, idempotencyKey, x402Version?, resource?, agentKey? }` | For one requirement from an x402 `402` challenge, returns the `PAYMENT-SIGNATURE` value paid from that balance. You make and replay the HTTP request yourself. |
@@ -57,7 +71,9 @@ or sats? Use them to top up OpenRouter with ROZO Checkout (`create_deposit_order
 `create_deposit_order` applies the same guards as the CLI before it returns a deposit address:
 link payability (not used, not expired, v3 session still `CREATED`), an existing order must be
 `payment_unpaid` with no pay-in and the same coin, the address must not be on the
-compromised-address list, and at least 10 minutes must remain on both the order and the link.
+compromised-address list, and at least 10 minutes must remain on the order, the link and, for a
+native coin, the price lock (`quoteExpiresAt`). Native coins are also checked against the invoice's
+`supportedSources` and the USD limits before any order is created.
 
 Upstream endpoints (identical request shapes to the CLI, all keyless):
 
@@ -153,9 +169,9 @@ curl -s -X POST 'http://127.0.0.1:8787/mcp?src=dev' \
 
 ## Deploy
 
-Deployment and the `mcp.rozo.ai` custom domain need owner approval and are not automated here.
-`wrangler.toml` pins the Cloudflare account that owns the `rozo.ai` zone and keeps the custom
-domain route commented out until then.
+Deployment needs owner approval and is not automated here (merging does not deploy). `wrangler.toml`
+pins the Cloudflare account that owns the `rozo.ai` zone and the `mcp.rozo.ai` custom domain route, so a
+deploy is `npx wrangler deploy` from a clean checkout of `main`.
 
 ## MCP registry
 

@@ -9,7 +9,7 @@ const DEPOSIT = 'So1anaDepositAddr1111111111111111111111111';
 
 type Call = { url: string; method: string; body: any };
 
-function mockFetch(overrides: { payment?: any } = {}) {
+function mockFetch(overrides: { payment?: any; quote?: Record<string, unknown> } = {}) {
   const calls: Call[] = [];
   const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();
   const fn = async (url: string, init?: RequestInit) => {
@@ -24,6 +24,7 @@ function mockFetch(overrides: { payment?: any } = {}) {
         quote: { callerPays: '5.00' },
         coinbasePayment: { status: 'ACTIVE', usageCount: 0, maxUsage: 1, preApprovalExpiry: future },
         quoteReceipt: 'rcpt_abc',
+        ...(overrides.quote ?? {}),
       });
     }
     if (url === `${MPP_BASE}/create-invoice`) return reply({ rozoPaymentId: ID, reused: false, paymentLink: 'https://x/pay' });
@@ -76,6 +77,8 @@ describe('tools/list', () => {
     const create = tools.find((t) => t.name === 'create_deposit_order');
     expect(create.inputSchema.required.sort()).toEqual(['chainId', 'tokenSymbol', 'url']);
     expect(create.inputSchema.properties.chainId.enum).toContain('lightning');
+    expect(create.inputSchema.properties.chainId.enum).toContain('42161');
+    expect(create.description).toMatch(/quoteExpiresAt/);
     expect(create.description).toMatch(/creates a one-time deposit order; you pay from your own wallet/i);
     expect(tools.find((t) => t.name === 'quote_invoice').inputSchema.required).toEqual(['url']);
     expect(tools.find((t) => t.name === 'payment_status').inputSchema.required).toEqual(['rozoPaymentId']);
@@ -227,5 +230,157 @@ describe('expiry guard', () => {
     expect(out.result.isError).toBe(true);
     expect(out.result.content[0].text).toContain('EXPIRY_UNPARSABLE');
     expect(out.result.content[0].text).not.toContain(DEPOSIT);
+  });
+});
+
+describe('native coins and Arbitrum', () => {
+  const SOL_DEPOSIT = 'So1anaNativeDeposit11111111111111111111111';
+  const ALL_NATIVE = {
+    '1': ['USDC', 'USDT', 'ETH'],
+    '56': ['USDC', 'USDT', 'BNB'],
+    '137': ['USDC', 'USDT', 'POL'],
+    '8453': ['USDC', 'ETH'],
+    '42161': ['USDC', 'USDT', 'ETH'],
+    '900': ['USDC', 'USDT', 'SOL'],
+    '1500': ['USDC'],
+  };
+  const inMin = (m: number) => new Date(Date.now() + m * 60e3).toISOString();
+  const nativePayment = (extra: Record<string, unknown> = {}) => ({
+    status: 'payment_unpaid',
+    expiresAt: inMin(60 + 720),
+    quoteExpiresAt: inMin(55),
+    source: { chainId: '900', tokenSymbol: 'SOL', receiverAddress: SOL_DEPOSIT, amount: '0.0321', amountReceived: null, txHash: null },
+    ...extra,
+  });
+
+  it('supported_coins lists native coins with on-chain decimals and never labels POL beta', async () => {
+    const { fn } = mockFetch();
+    const out = await rpc('tools/call', { name: 'supported_coins', arguments: {} }, fn);
+    const text = out.result.content[0].text;
+    const rows = JSON.parse(text).supportedSources as any[];
+    const by = (id: string) => rows.find((r) => r.chainId === id);
+    expect(by('1').tokens).toEqual(['USDC', 'USDT', 'ETH']);
+    expect(by('8453').tokens).toEqual(['USDC', 'ETH']);
+    expect(by('42161').tokens).toEqual(['USDC', 'USDT', 'ETH']);
+    expect(by('56').native).toBe('BNB');
+    expect(by('137').native).toBe('POL');
+    expect(by('900').decimals.SOL).toBe(9);
+    for (const [id, sym] of [['1', 'ETH'], ['8453', 'ETH'], ['42161', 'ETH'], ['56', 'BNB'], ['137', 'POL']] as const) expect(by(id).decimals[sym]).toBe(18);
+    expect(by('56').decimals.USDC).toBe(18);
+    expect(by('1500').tokens).toEqual(['USDC']);
+    expect(text.toLowerCase()).not.toContain('beta');
+  });
+
+  it('quote_invoice offers a native coin only when the invoice lists it', async () => {
+    const none = await rpc('tools/call', { name: 'quote_invoice', arguments: { url: LINK } }, mockFetch().fn);
+    const noneRows = JSON.parse(none.result.content[0].text).supportedSources as any[];
+    expect(noneRows.find((r) => r.chainId === '900').tokens).toEqual(['USDC', 'USDT']);
+    expect(noneRows.find((r) => r.chainId === '42161').tokens).toEqual(['USDC', 'USDT']);
+    expect(noneRows.find((r) => r.chainId === 'lightning').tokens).toEqual(['BTC']);
+
+    const some = await rpc(
+      'tools/call',
+      { name: 'quote_invoice', arguments: { url: LINK } },
+      mockFetch({ quote: { supportedSources: { ...ALL_NATIVE, '137': ['USDC', 'USDT'] }, nativeMinUsd: { '1': { ETH: 1 } } } }).fn,
+    );
+    const payload = JSON.parse(some.result.content[0].text);
+    const rows = payload.supportedSources as any[];
+    expect(rows.find((r) => r.chainId === '900').tokens).toEqual(['USDC', 'USDT', 'SOL']);
+    expect(rows.find((r) => r.chainId === '137').tokens).toEqual(['USDC', 'USDT']);
+    expect(rows.find((r) => r.chainId === '137').native).toBeUndefined();
+    expect(payload.nativeMinUsd).toEqual({ '1': { ETH: 1 } });
+    expect(payload.nativeMaxUsd).toBe(2000);
+  });
+
+  it('creates a native SOL order: exact amount, 9 decimals, expiresAt is the price lock', async () => {
+    const payment = nativePayment();
+    const { fn, calls } = mockFetch({ quote: { supportedSources: ALL_NATIVE }, payment });
+    const out = await rpc('tools/call', { name: 'create_deposit_order', arguments: { url: LINK, chainId: '900', tokenSymbol: 'sol' } }, fn);
+    expect(out.result.isError).toBeFalsy();
+    const create = calls.find((c) => c.url === `${MPP_BASE}/create-invoice`)!;
+    expect(create.body.source).toEqual({ chainId: '900', tokenSymbol: 'SOL' });
+    const p = JSON.parse(out.result.content[0].text);
+    expect(p.deposit).toMatchObject({ payTo: SOL_DEPOSIT, amount: '0.0321', decimals: 9, amountBaseUnits: '32100000', native: true, exactOut: true });
+    expect(p.quoteExpiresAt).toBe(new Date(payment.quoteExpiresAt).toISOString());
+    expect(p.expiresAt).toBe(p.quoteExpiresAt);
+    expect(p.instructions[0]).toContain(p.quoteExpiresAt);
+    expect(p.instructions[0]).toMatch(/EXACTLY 0\.0321 SOL \(32100000 base units, 9 decimals\)/);
+  });
+
+  it('expresses ETH, BNB and POL amounts in 18-decimal base units', async () => {
+    for (const [chainId, sym] of [['42161', 'ETH'], ['56', 'BNB'], ['137', 'POL'], ['8453', 'ETH']]) {
+      const payment = nativePayment({ source: { chainId, tokenSymbol: sym, receiverAddress: '0x1111111111111111111111111111111111111111', amount: '0.0142' } });
+      const { fn } = mockFetch({ quote: { supportedSources: ALL_NATIVE }, payment });
+      const out = await rpc('tools/call', { name: 'create_deposit_order', arguments: { url: LINK, chainId, tokenSymbol: sym } }, fn);
+      expect(out.result.isError).toBeFalsy();
+      const p = JSON.parse(out.result.content[0].text);
+      expect(p.deposit.decimals).toBe(18);
+      expect(p.deposit.amountBaseUnits).toBe('14200000000000000');
+    }
+  });
+
+  it('refuses a native coin the invoice does not list, before creating anything', async () => {
+    const { fn, calls } = mockFetch({ quote: { supportedSources: { '900': ['USDC', 'USDT'] } } });
+    const out = await rpc('tools/call', { name: 'create_deposit_order', arguments: { url: LINK, chainId: '900', tokenSymbol: 'SOL' } }, fn);
+    expect(out.result.isError).toBe(true);
+    expect(out.result.content[0].text).toContain('NATIVE_NOT_OFFERED');
+    expect(calls.some((c) => c.url === `${MPP_BASE}/create-invoice`)).toBe(false);
+  });
+
+  it('enforces the $2,000 cap and the per-chain minimum before creating anything', async () => {
+    const over = mockFetch({ quote: { supportedSources: ALL_NATIVE, callerPays: '2000.01', quote: { callerPays: '2000.01' } } });
+    const a = await rpc('tools/call', { name: 'create_deposit_order', arguments: { url: LINK, chainId: '1', tokenSymbol: 'ETH' } }, over.fn);
+    expect(a.result.content[0].text).toContain('NATIVE_OVER_LIMIT');
+    expect(over.calls.some((c) => c.url === `${MPP_BASE}/create-invoice`)).toBe(false);
+
+    const under = mockFetch({ quote: { supportedSources: ALL_NATIVE, quote: { callerPays: '0.50' } } });
+    const b = await rpc('tools/call', { name: 'create_deposit_order', arguments: { url: LINK, chainId: '1', tokenSymbol: 'ETH' } }, under.fn);
+    expect(b.result.content[0].text).toContain('NATIVE_UNDER_MINIMUM');
+    expect(under.calls.some((c) => c.url === `${MPP_BASE}/create-invoice`)).toBe(false);
+
+    // The same $0.50 is fine on Base, whose floor is $0.10.
+    const base = mockFetch({
+      quote: { supportedSources: ALL_NATIVE, quote: { callerPays: '0.50' } },
+      payment: nativePayment({ source: { chainId: '8453', tokenSymbol: 'ETH', receiverAddress: '0x1111111111111111111111111111111111111111', amount: '0.0002' } }),
+    });
+    const c = await rpc('tools/call', { name: 'create_deposit_order', arguments: { url: LINK, chainId: '8453', tokenSymbol: 'ETH' } }, base.fn);
+    expect(c.result.isError).toBeFalsy();
+  });
+
+  it('refuses a native order without a price lock or with one about to end, without leaking the address', async () => {
+    const missing = mockFetch({ quote: { supportedSources: ALL_NATIVE }, payment: nativePayment({ quoteExpiresAt: undefined }) });
+    const a = await rpc('tools/call', { name: 'create_deposit_order', arguments: { url: LINK, chainId: '900', tokenSymbol: 'SOL' } }, missing.fn);
+    expect(a.result.isError).toBe(true);
+    expect(a.result.content[0].text).toContain('EXPIRY_UNPARSABLE');
+    expect(a.result.content[0].text).not.toContain(SOL_DEPOSIT);
+
+    const late = mockFetch({ quote: { supportedSources: ALL_NATIVE }, payment: nativePayment({ quoteExpiresAt: inMin(5) }) });
+    const b = await rpc('tools/call', { name: 'create_deposit_order', arguments: { url: LINK, chainId: '900', tokenSymbol: 'SOL' } }, late.fn);
+    expect(b.result.isError).toBe(true);
+    expect(b.result.content[0].text).toContain('QUOTE_EXPIRED');
+    expect(b.result.content[0].text).not.toContain(SOL_DEPOSIT);
+  });
+
+  it('accepts USDC and USDT on Arbitrum without any native gating or price lock', async () => {
+    const payment = {
+      status: 'payment_unpaid',
+      expiresAt: inMin(60),
+      source: { chainId: '42161', tokenSymbol: 'USDT', receiverAddress: '0x2222222222222222222222222222222222222222', amount: '5.06' },
+    };
+    const { fn } = mockFetch({ payment });
+    const out = await rpc('tools/call', { name: 'create_deposit_order', arguments: { url: LINK, chainId: '42161', tokenSymbol: 'USDT' } }, fn);
+    expect(out.result.isError).toBeFalsy();
+    const p = JSON.parse(out.result.content[0].text);
+    expect(p.deposit).toMatchObject({ chain: 'Arbitrum', decimals: 6, amountBaseUnits: '5060000', native: false, exactOut: false });
+    expect(p.quoteExpiresAt).toBeUndefined();
+  });
+
+  it('still rejects coins that are not sources (USDT on Base, ETH on Polygon)', async () => {
+    const { fn, calls } = mockFetch({ quote: { supportedSources: ALL_NATIVE } });
+    for (const [chainId, tokenSymbol] of [['8453', 'USDT'], ['137', 'ETH'], ['1500', 'XLM']]) {
+      const out = await rpc('tools/call', { name: 'create_deposit_order', arguments: { url: LINK, chainId, tokenSymbol } }, fn);
+      expect(out.result.content[0].text).toContain('UNSUPPORTED_SOURCE');
+    }
+    expect(calls).toHaveLength(0);
   });
 });
