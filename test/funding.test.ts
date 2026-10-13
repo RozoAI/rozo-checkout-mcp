@@ -75,6 +75,7 @@ describe('tool descriptions', () => {
       expect(d).toMatch(/same on Base, Ethereum, Arbitrum and Polygon/);
       expect(d).toMatch(/USDC or USDT is accepted 1:1/);
       expect(d).toMatch(/EXACT deposit amount/);
+      expect(d).toMatch(/amountPolicy/);
     }
     // No tool takes a secret key.
     for (const t of tools) expect(JSON.stringify(t.inputSchema)).not.toMatch(/secretKey|privateKey|"secret"/i);
@@ -358,4 +359,70 @@ describe('order_status after payBefore', () => {
     expect(payload.paymentWindowClosed).toBe(true);
     expect(payload.guidance).toMatch(/Do NOT send a deposit/);
   });
+});
+
+
+describe('Funding actual amount policy', () => {
+  const policy = { amountPolicy: 'any_amount', minAcceptedAmount: '0.51', maxPricedAmount: '1000' };
+  it('preserves quote policy and bounds', async () => {
+    const { fn } = mockFetch({ 'GET /capabilities': () => reply(caps), 'POST /quotes': () => reply({ ...QUOTE, source: { ...QUOTE.source, ...policy } }, 201) });
+    const { payload } = await call('stellar_wallet_quote', { receiverAddress: RECEIVER, sourceChain: 'base', amountUsd: '10' }, fn);
+    expect(payload.source).toMatchObject(policy);
+  });
+  it('preserves order policy and gives bounded actual-amount instructions', async () => {
+    const o: any = order(); o.deposit = { ...o.deposit, ...policy };
+    const { fn } = mockFetch({ 'POST /orders': () => reply(o, 201) });
+    const { payload } = await call('stellar_wallet_create_order', { quoteId: QUOTE.quoteId, planDigest: QUOTE.planDigest, orderId: 'agent-policy-0001' }, fn);
+    expect(payload.deposit).toMatchObject(policy);
+    expect(payload.instructions.join(' ')).toMatch(/Suggested amount.*0.51.*1000.*XLM tier stays the same/);
+    expect(payload.instructions.join(' ')).not.toContain('Send EXACTLY');
+    expect(payload.instructions.join(' ')).toMatch(/Below the minimum needs manual handling/);
+  });
+  it('status reflects repriced legs and audit rather than the original quote', async () => {
+    const audit = { quotedAmount: '10', receivedAmount: '8', pricedAmount: '8', excessAmount: '0', quotedPlanDigest: 'a'.repeat(64) };
+    const o: any = order({ repricing: audit, legs: [{ ...QUOTE.legs.find((l: any) => l.kind === 'stable'), minimumAmount: '7.49' }] }); o.deposit = { ...o.deposit, ...policy };
+    const { fn } = mockFetch({ [`GET /orders/${FUNDING_ID}`]: () => reply(o) });
+    const { payload } = await call('stellar_wallet_order_status', { fundingId: FUNDING_ID }, fn);
+    expect(payload.deposit).toMatchObject(policy);
+    expect(payload.repricing).toEqual(audit);
+    expect(payload.legs[0].minimumAmount).toBe('7.49');
+    expect(payload.guidance).toContain('0.51');
+  });
+  it.each([undefined, 'exact', 'untrusted'])('keeps legacy exact guidance for policy %s', async (amountPolicy) => {
+    const o: any = order(); o.deposit = { ...o.deposit, amountPolicy };
+    const { fn } = mockFetch({ [`GET /orders/${FUNDING_ID}`]: () => reply(o) });
+    const { payload } = await call('stellar_wallet_order_status', { fundingId: FUNDING_ID }, fn);
+    expect(payload.deposit.amountPolicy).toBe('exact');
+    expect(payload.guidance).toContain('Send EXACTLY 10');
+  });
+  it('fails closed on an incomplete any_amount range', async () => {
+    const o: any = order(); o.deposit = { ...o.deposit, ...policy, minAcceptedAmount: 'invalid' };
+    const { fn } = mockFetch({ [`GET /orders/${FUNDING_ID}`]: () => reply(o) });
+    const { payload } = await call('stellar_wallet_order_status', { fundingId: FUNDING_ID }, fn);
+    expect(payload.guidance).toContain('Do not pay');
+    expect(payload.deposit.minAcceptedAmount).toBeNull();
+  });
+});
+
+
+it('signing guidance checks the current order template rather than the original quoted minimum', async () => {
+  const { fn } = mockFetch({ [`POST /orders/${FUNDING_ID}/signing-requests`]: () => reply({ signingRequestId: SR_ID, fundingId: FUNDING_ID, status: 'ready', networkPassphrase: STELLAR_PUBLIC_PASSPHRASE, xdr: SIGNED, operations: [] }, 201) });
+  const { payload, isError } = await call('stellar_wallet_get_signing_request', { fundingId: FUNDING_ID, walletAddress: RECEIVER }, fn);
+  expect(isError).toBe(false);
+  expect(payload.instructions.join(' ')).toContain('numerically equals the current order.legs minimumAmount after repricing and matches the server template');
+  expect(payload.instructions.join(' ')).not.toContain('quoted minimum');
+  expect(payload.instructions.join(' ')).toContain('Sign the XDR unchanged');
+});
+
+
+it.each([undefined, 'invalid', '-1', '0', '9'.repeat(41)])('create order refuses incomplete or invalid actual-amount bounds %s', async (minAcceptedAmount) => {
+  const o: any = order();
+  o.deposit = { ...o.deposit, amountPolicy: 'any_amount', minAcceptedAmount, maxPricedAmount: '1000' };
+  const { fn } = mockFetch({ 'POST /orders': () => reply(o, 201) });
+  const { isError, payload } = await call('stellar_wallet_create_order', { quoteId: QUOTE.quoteId, planDigest: QUOTE.planDigest, orderId: 'agent-range-0001' }, fn);
+  expect(isError).toBe(true);
+  expect(payload.error.code).toBe('DEPOSIT_INCOMPLETE');
+  expect(payload.fundingId).toBe(FUNDING_ID);
+  expect(payload.deposit).toBeUndefined();
+  expect(payload.instructions).toBeUndefined();
 });
