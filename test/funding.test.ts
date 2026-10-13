@@ -409,7 +409,14 @@ it('signing guidance checks the current order template rather than the original 
   const { fn } = mockFetch({ [`POST /orders/${FUNDING_ID}/signing-requests`]: () => reply({ signingRequestId: SR_ID, fundingId: FUNDING_ID, status: 'ready', networkPassphrase: STELLAR_PUBLIC_PASSPHRASE, xdr: SIGNED, operations: [] }, 201) });
   const { payload, isError } = await call('stellar_wallet_get_signing_request', { fundingId: FUNDING_ID, walletAddress: RECEIVER }, fn);
   expect(isError).toBe(false);
-  expect(payload.instructions.join(' ')).toContain('numerically equals the current order.legs minimumAmount after repricing and matches the server template');
+  const text = payload.instructions.join(' ');
+  expect(text).toContain('equals the current stable leg minimumAmount (order.legs, after repricing) plus the sponsor fee');
+  expect(text).toContain('GBLTI2TTQXUAYNKGCQ63YA55KTFEAOQJ3DPBPELNPWCJVE76ADWMXUAE');
+  expect(text).toContain('XLM payment equals the native (XLM) leg minimumAmount');
+  expect(text).toContain('call stellar_wallet_get_signing_request again');
+  expect(text).toContain('Any other operation type or source');
+  expect(text).toContain('transaction source must NOT be your address');
+  expect(text).not.toContain('numerically equals');
   expect(payload.instructions.join(' ')).not.toContain('quoted minimum');
   expect(payload.instructions.join(' ')).toContain('Sign the XDR unchanged');
 });
