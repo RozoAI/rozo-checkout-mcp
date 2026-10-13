@@ -9,7 +9,8 @@
  *   POST {INTENTS}/funding/signing-requests/{id}/submit        { signedXdr }
  *
  * Contract: rozo-intents-api docs/openapi-funding-v1.1.0.yaml. No API key is
- * sent: these calls run as the keyless app, rate limited per client IP.
+ * sent: these calls run as the keyless app, rate limited per client IP. The
+ * MCP caller's IP is forwarded when ROZO_PROXY_SECRET is bound (client-ip.ts).
  *
  * Custody: this server never asks for, receives or holds a Stellar secret key
  * or an EVM key. The caller's own wallet pays the deposit and signs the XDR.
@@ -18,6 +19,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { INTENTS_BASE, UpstreamError, type FetchLike } from './api';
+import { withClientIp, type ClientForward } from './client-ip';
 import { isBlacklisted } from './blacklist';
 import { SUPPORT } from './support';
 import { CLIENT_LABEL } from './version';
@@ -289,8 +291,8 @@ function orderGuidance(status: string | null, pending: ReturnType<typeof actions
   }
 }
 
-export function registerFundingTools(server: McpServer, opts: { fetchFn: FetchLike; now?: () => number }): void {
-  const f = opts.fetchFn;
+export function registerFundingTools(server: McpServer, opts: { fetchFn: FetchLike; now?: () => number; forward?: ClientForward }): void {
+  const f = withClientIp(opts.fetchFn, opts.forward ?? null);
   const now = opts.now ?? (() => Date.now());
 
   server.registerTool(

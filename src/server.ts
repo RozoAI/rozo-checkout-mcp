@@ -3,9 +3,10 @@ import { makeApi, type FetchLike } from './api';
 import { registerTools } from './tools';
 import { registerX402Tools } from './x402';
 import { registerFundingTools } from './funding';
+import type { ClientForward } from './client-ip';
 import { SERVER_NAME, VERSION } from './version';
 
-export function buildServer(opts: { fetchFn: FetchLike; src: string; now?: () => number; agentKey?: string | null }): McpServer {
+export function buildServer(opts: { fetchFn: FetchLike; src: string; now?: () => number; agentKey?: string | null; forward?: ClientForward }): McpServer {
   const server = new McpServer(
     { name: SERVER_NAME, version: VERSION, title: 'Rozo Checkout' },
     {
@@ -19,6 +20,6 @@ export function buildServer(opts: { fetchFn: FetchLike; src: string; now?: () =>
   );
   registerTools(server, { api: makeApi(opts.fetchFn), src: opts.src, now: opts.now });
   registerX402Tools(server, { fetchFn: opts.fetchFn, connectionKey: opts.agentKey ?? null });
-  registerFundingTools(server, { fetchFn: opts.fetchFn, now: opts.now });
+  registerFundingTools(server, { fetchFn: opts.fetchFn, now: opts.now, forward: opts.forward ?? null });
   return server;
 }
