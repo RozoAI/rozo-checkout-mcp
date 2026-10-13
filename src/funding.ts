@@ -424,6 +424,7 @@ export function registerFundingTools(server: McpServer, opts: { fetchFn: FetchLi
         const deposit = depositView(o.deposit);
         const base = { fundingId: str(o.fundingId, 64), orderId: oid, upstreamOrderId: up.orderId, replayed: status === 200, support: SUPPORT };
         if (!deposit?.address || !deposit.amount || !(Number(deposit.amount) > 0)) return fail('DEPOSIT_INCOMPLETE', 'The order carries no deposit address or amount. Do not pay.', base);
+        if (deposit.amountPolicy === 'any_amount' && (!deposit.minAcceptedAmount || !deposit.maxPricedAmount)) return fail('DEPOSIT_INCOMPLETE', 'The actual-amount payment range is missing or invalid. Do not pay; poll the order or contact ROZO.', base);
         if (isBlacklisted(deposit.address)) return fail('BLACKLIST_HIT', 'The deposit address matches a known compromised address. Do NOT send anything.', base);
         const orderStatus = str(o.status, 32);
         const payBeforeMs = deposit.payBefore ? Date.parse(deposit.payBefore) : NaN;
@@ -517,7 +518,7 @@ export function registerFundingTools(server: McpServer, opts: { fetchFn: FetchLi
       description:
         'When an order shows sign_stellar_onboarding, build the one transaction the receiving address must sign (creates the account if needed, adds the USDC trustline, claims the USDC, delivers XLM). ' +
         'Returns signingRequestId, the unsigned XDR, networkPassphrase, a readable operations list and expiresAt (at most 5 minutes). ' +
-        'Sign it with the receiver wallet YOU control (Stellar SDK, Freighter, any wallet); do not modify it. Check the operations first: your address, USDC matches the current order.legs minimumAmount after repricing and the server template, the XLM from usdGas. This server never sees your key. Then call stellar_wallet_submit_signed.',
+        'Sign it with the receiver wallet YOU control (Stellar SDK, Freighter, any wallet); do not modify it. Check the operations first: your address, USDC numerically equals the current order.legs minimumAmount after repricing and matches the server template, the XLM from usdGas. This server never sees your key. Then call stellar_wallet_submit_signed.',
       inputSchema: {
         fundingId: z.string().max(64).describe('fundingId of the order.'),
         walletAddress: z.string().max(80).describe('The order\'s receiving Stellar PUBLIC address (G...).'),
@@ -547,7 +548,7 @@ export function registerFundingTools(server: McpServer, opts: { fetchFn: FetchLi
           templateVersion: str(r.templateVersion, 64),
           operations: Array.isArray(r.operations) ? r.operations.slice(0, 30) : [],
           instructions: [
-            'Check operations: destination is your address, USDC matches the current order.legs minimumAmount after repricing and the server template, XLM matches usdGas. Refuse anything else.',
+            'Check operations: destination is your address, USDC numerically equals the current order.legs minimumAmount after repricing and matches the server template, XLM matches usdGas. Refuse anything else.',
             'Sign the XDR unchanged with the walletAddress key, on the Public network, before expiresAt.',
             'Then call stellar_wallet_submit_signed with signingRequestId and the signed XDR (base64). Never paste a secret key anywhere.',
           ],

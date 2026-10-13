@@ -409,7 +409,20 @@ it('signing guidance checks the current order template rather than the original 
   const { fn } = mockFetch({ [`POST /orders/${FUNDING_ID}/signing-requests`]: () => reply({ signingRequestId: SR_ID, fundingId: FUNDING_ID, status: 'ready', networkPassphrase: STELLAR_PUBLIC_PASSPHRASE, xdr: SIGNED, operations: [] }, 201) });
   const { payload, isError } = await call('stellar_wallet_get_signing_request', { fundingId: FUNDING_ID, walletAddress: RECEIVER }, fn);
   expect(isError).toBe(false);
-  expect(payload.instructions.join(' ')).toContain('current order.legs minimumAmount after repricing and the server template');
+  expect(payload.instructions.join(' ')).toContain('numerically equals the current order.legs minimumAmount after repricing and matches the server template');
   expect(payload.instructions.join(' ')).not.toContain('quoted minimum');
   expect(payload.instructions.join(' ')).toContain('Sign the XDR unchanged');
+});
+
+
+it.each([undefined, 'invalid', '-1', '0', '9'.repeat(41)])('create order refuses incomplete or invalid actual-amount bounds %s', async (minAcceptedAmount) => {
+  const o: any = order();
+  o.deposit = { ...o.deposit, amountPolicy: 'any_amount', minAcceptedAmount, maxPricedAmount: '1000' };
+  const { fn } = mockFetch({ 'POST /orders': () => reply(o, 201) });
+  const { isError, payload } = await call('stellar_wallet_create_order', { quoteId: QUOTE.quoteId, planDigest: QUOTE.planDigest, orderId: 'agent-range-0001' }, fn);
+  expect(isError).toBe(true);
+  expect(payload.error.code).toBe('DEPOSIT_INCOMPLETE');
+  expect(payload.fundingId).toBe(FUNDING_ID);
+  expect(payload.deposit).toBeUndefined();
+  expect(payload.instructions).toBeUndefined();
 });
