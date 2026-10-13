@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { handleMcp } from '../src/index';
-import { FUNDING_BASE, STELLAR_PUBLIC_PASSPHRASE } from '../src/funding';
+import { FUNDING_BASE, STELLAR_PUBLIC_PASSPHRASE, upstreamOrderIds } from '../src/funding';
 import caps from './fixtures/funding-capabilities.json';
 import quoteFixture from './fixtures/funding-quote.json';
 
@@ -163,13 +163,18 @@ describe('stellar_wallet_quote', () => {
 });
 
 describe('stellar_wallet_create_order', () => {
-  it('sends the Idempotency-Key derived from orderId and returns the deposit', async () => {
+  it('sends upstream ids derived from quoteId + orderId and returns the deposit', async () => {
     const { fn, calls } = mockFetch({ 'POST /orders': () => reply(order(), 201) });
     const { isError, payload } = await call('stellar_wallet_create_order', { quoteId: QUOTE.quoteId, planDigest: QUOTE.planDigest, orderId: 'agent-order-0001' }, fn);
     expect(isError).toBe(false);
     const c = calls[0]!;
-    expect(c.headers['idempotency-key']).toBe('agent-order-0001');
-    expect(c.body).toEqual({ quoteId: QUOTE.quoteId, planDigest: QUOTE.planDigest, orderId: 'agent-order-0001' });
+    const up = await upstreamOrderIds(QUOTE.quoteId, 'agent-order-0001');
+    expect(c.headers['idempotency-key']).toBe(up.idempotencyKey);
+    expect(c.body).toEqual({ quoteId: QUOTE.quoteId, planDigest: QUOTE.planDigest, orderId: up.orderId });
+    // The caller's own reference never leaves the server; it is echoed back to the caller.
+    expect(JSON.stringify(c.body) + c.headers['idempotency-key']).not.toContain('agent-order-0001');
+    expect(payload.orderId).toBe('agent-order-0001');
+    expect(payload.upstreamOrderId).toBe(up.orderId);
     expect(payload.fundingId).toBe(FUNDING_ID);
     expect(payload.replayed).toBe(false);
     expect(payload.deposit.address).toBe(DEPOSIT);
@@ -177,6 +182,40 @@ describe('stellar_wallet_create_order', () => {
     expect(payload.deposit.payBefore).toBe('2099-01-01T00:00:00Z');
     expect(payload.deposit.acceptedChains).toEqual(['Base', 'Ethereum', 'Arbitrum', 'Polygon']);
     expect(payload.deposit.acceptedTokens[0]).toHaveProperty('USDT');
+  });
+
+  it('derives stable, namespaced upstream ids within the upstream charset and length limits', async () => {
+    const q1 = QUOTE.quoteId as string;
+    const q2 = '11111111-2222-4333-8444-555555555555';
+    const a = await upstreamOrderIds(q1, 'agent-order-0001');
+    // Stable across retries of the same call (and quoteId case).
+    expect(await upstreamOrderIds(q1, 'agent-order-0001')).toEqual(a);
+    expect(await upstreamOrderIds(q1.toUpperCase(), 'agent-order-0001')).toEqual(a);
+    // Two callers using the same reference on different quotes do not collide.
+    const b = await upstreamOrderIds(q2, 'agent-order-0001');
+    expect(b.orderId).not.toBe(a.orderId);
+    expect(b.idempotencyKey).not.toBe(a.idempotencyKey);
+    // Different references on the same quote differ too.
+    expect((await upstreamOrderIds(q1, 'agent-order-0002')).orderId).not.toBe(a.orderId);
+    // Upstream: orderId [A-Za-z0-9_.:-]{1,128}, Idempotency-Key [A-Za-z0-9_.:-]{8,128}.
+    for (const id of [a.orderId, a.idempotencyKey, (await upstreamOrderIds(q1, 'x'.repeat(128))).orderId]) {
+      expect(id).toMatch(/^[A-Za-z0-9_.:-]{8,128}$/);
+    }
+    expect(a.orderId).not.toBe(a.idempotencyKey);
+  });
+
+  it('two callers with the same orderId send different upstream ids', async () => {
+    const { fn, calls } = mockFetch({ 'POST /orders': () => reply(order(), 201) });
+    const q2 = '11111111-2222-4333-8444-555555555555';
+    await call('stellar_wallet_create_order', { quoteId: QUOTE.quoteId, planDigest: QUOTE.planDigest, orderId: 'agent-order-0001' }, fn);
+    await call('stellar_wallet_create_order', { quoteId: q2, planDigest: QUOTE.planDigest, orderId: 'agent-order-0001' }, fn);
+    await call('stellar_wallet_create_order', { quoteId: QUOTE.quoteId, planDigest: QUOTE.planDigest, orderId: 'agent-order-0001' }, fn);
+    expect(calls).toHaveLength(3);
+    expect(calls[0]!.body.orderId).not.toBe(calls[1]!.body.orderId);
+    expect(calls[0]!.headers['idempotency-key']).not.toBe(calls[1]!.headers['idempotency-key']);
+    // A retry of the first call repeats its ids exactly.
+    expect(calls[2]!.body).toEqual(calls[0]!.body);
+    expect(calls[2]!.headers['idempotency-key']).toBe(calls[0]!.headers['idempotency-key']);
   });
 
   it('marks an idempotent replay (200)', async () => {
