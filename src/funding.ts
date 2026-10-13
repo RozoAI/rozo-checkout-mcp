@@ -47,6 +47,21 @@ const SECRET_SEED_RE = /S[A-Z2-7]{55}/;
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 const ORDER_ID_RE = /^[A-Za-z0-9_.:-]{8,128}$/;
 const DIGEST_RE = /^[0-9a-f]{64}$/;
+
+/**
+ * Every keyless caller shares one upstream app, and the Funding API enforces
+ * uniqueness per app on both order_id and Idempotency-Key. A caller's orderId
+ * is only unique to that caller, so it is never sent upstream as is: both
+ * upstream identifiers are derived from (quoteId, orderId). The same call
+ * retried gives the same identifiers (an idempotent replay); another caller,
+ * or another quote, gives different ones. Output fits the upstream charset
+ * [A-Za-z0-9_.:-] and length limits (orderId 1-128, Idempotency-Key 8-128).
+ */
+export async function upstreamOrderIds(quoteId: string, orderId: string): Promise<{ orderId: string; idempotencyKey: string }> {
+  const data = new TextEncoder().encode(`rozo-mcp-funding-order:v1\n${quoteId.toLowerCase()}\n${orderId}`);
+  const hex = [...new Uint8Array(await crypto.subtle.digest('SHA-256', data))].map((b) => b.toString(16).padStart(2, '0')).join('');
+  return { orderId: `mcp.o.${hex}`, idempotencyKey: `mcp.k.${hex}` };
+}
 const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
 
 export const FUNDING_FACTS =
@@ -359,12 +374,12 @@ export function registerFundingTools(server: McpServer, opts: { fetchFn: FetchLi
       title: 'Create a Stellar wallet funding order',
       description:
         'Turn an approved quote into a payable order. Returns fundingId (keep it private: it is the only handle to the order), the one-time deposit address, the exact amount, payBefore and the accepted chains and tokens. ' +
-        'The Idempotency-Key is derived from your orderId: retrying with the same orderId returns the same order instead of a second one. Creates an order but moves no funds; an unpaid order expires at no cost. ' +
+        'orderId is your own reference: the server derives the upstream order id and Idempotency-Key from quoteId plus orderId, so it only has to be unique among your own orders. Retrying with the same quoteId and orderId returns the same order instead of a second one. Creates an order but moves no funds; an unpaid order expires at no cost. ' +
         FUNDING_FACTS,
       inputSchema: {
         quoteId: z.string().max(64).describe('quoteId from stellar_wallet_quote.'),
         planDigest: z.string().max(64).describe('planDigest from the same quote.'),
-        orderId: z.string().max(128).describe('Your own unique order reference, 8 to 128 chars of A-Z a-z 0-9 _ . : -. Reuse it to retry safely.'),
+        orderId: z.string().max(128).describe('Your own order reference, 8 to 128 chars of A-Z a-z 0-9 _ . : -, unique among your orders (for example agent-order-0001). Reuse it with the same quoteId to retry safely.'),
       },
       annotations: { title: 'Create a Stellar wallet funding order', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
@@ -379,10 +394,10 @@ export function registerFundingTools(server: McpServer, opts: { fetchFn: FetchLi
           return fail('SECRET_KEY_REFUSED', 'orderId looks like a private key (64 hex characters). Never share keys; use a plain reference such as agent-order-0001.');
         }
         if (!ORDER_ID_RE.test(oid)) return fail('BAD_ORDER_ID', 'orderId must be 8 to 128 characters of A-Z a-z 0-9 _ . : -');
-        const idempotencyKey = oid;
-        const { json: o, status } = await fundingRequest(f, 'POST', '/orders', { quoteId: qid, planDigest: digest, orderId: oid }, { 'idempotency-key': idempotencyKey });
+        const up = await upstreamOrderIds(qid, oid);
+        const { json: o, status } = await fundingRequest(f, 'POST', '/orders', { quoteId: qid, planDigest: digest, orderId: up.orderId }, { 'idempotency-key': up.idempotencyKey });
         const deposit = depositView(o.deposit);
-        const base = { fundingId: str(o.fundingId, 64), orderId: oid, idempotencyKey, replayed: status === 200, support: SUPPORT };
+        const base = { fundingId: str(o.fundingId, 64), orderId: oid, upstreamOrderId: up.orderId, replayed: status === 200, support: SUPPORT };
         if (!deposit?.address || !deposit.amount || !(Number(deposit.amount) > 0)) return fail('DEPOSIT_INCOMPLETE', 'The order carries no deposit address or amount. Do not pay.', base);
         if (isBlacklisted(deposit.address)) return fail('BLACKLIST_HIT', 'The deposit address matches a known compromised address. Do NOT send anything.', base);
         const orderStatus = str(o.status, 32);
@@ -444,7 +459,7 @@ export function registerFundingTools(server: McpServer, opts: { fetchFn: FetchLi
         const windowClosed = status === 'awaiting_payment' && (!Number.isFinite(payBeforeMs) || payBeforeMs <= now());
         return ok({
           fundingId: id,
-          orderId: str(o.orderId, 128),
+          upstreamOrderId: str(o.orderId, 128),
           status,
           stateVersion: o.stateVersion ?? null,
           pendingActions,
