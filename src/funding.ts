@@ -70,6 +70,19 @@ export const FUNDING_FACTS =
   'The one-time deposit address is the same on Base, Ethereum, Arbitrum and Polygon; USDC or USDT is accepted 1:1. ' +
   'Follow deposit.amountPolicy: exact or missing means pay the EXACT deposit amount; any_amount uses the suggested amount and returned min/max bounds. Pay once, before payBefore. This server never holds keys: your own wallet pays and signs.';
 
+/** ROZO claim custody: the only account the user's side of the signing template pays (the sponsor fee). */
+export const CLAIM_CUSTODY_ADDRESS = 'GBLTI2TTQXUAYNKGCQ63YA55KTFEAOQJ3DPBPELNPWCJVE76ADWMXUAE';
+const USDC_ISSUER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+
+export const SIGNING_CHECKS =
+  `Check the operations first, and decode the XDR locally to confirm it matches them exactly. The transaction source must NOT be your address (it is a ROZO channel account, so ROZO pays the network fee). ` +
+  `Allowed, nothing else: ROZO-sourced beginSponsoringFutureReserves and createAccount for your address; from your address, changeTrust for USDC (issuer ${USDC_ISSUER}), endSponsoringFutureReserves, ` +
+  `claimClaimableBalance, and at most one payment: the sponsor fee in USDC to ROZO claim custody ${CLAIM_CUSTODY_ADDRESS}; and a ROZO-sourced XLM payment to your address. Any other operation type or source (setOptions, extra payments): refuse. ` +
+  `Amounts: the claimed USDC (gross) equals the current stable leg minimumAmount (order.legs, after repricing) plus the sponsor fee; ` +
+  `the sponsor fee is fixed at quote time (0.0000001 USDC with a paid usdGas tier, the quoted stellar_sponsor_fee with usdGas "0", no fee payment if the address needed no onboarding); ` +
+  `the XLM payment equals the native (XLM) leg minimumAmount. ` +
+  `The XDR shows only the claimable balance id; its amount is in the operations list and on Horizon /claimable_balances/{id}.`;
+
 type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean };
 
 function ok(payload: unknown): ToolResult {
@@ -518,7 +531,9 @@ export function registerFundingTools(server: McpServer, opts: { fetchFn: FetchLi
       description:
         'When an order shows sign_stellar_onboarding, build the one transaction the receiving address must sign (creates the account if needed, adds the USDC trustline, claims the USDC, delivers XLM). ' +
         'Returns signingRequestId, the unsigned XDR, networkPassphrase, a readable operations list and expiresAt (at most 5 minutes). ' +
-        'Sign it with the receiver wallet YOU control (Stellar SDK, Freighter, any wallet); do not modify it. Check the operations first: your address, USDC numerically equals the current order.legs minimumAmount after repricing and matches the server template, the XLM from usdGas. This server never sees your key. Then call stellar_wallet_submit_signed.',
+        'Sign it with the receiver wallet YOU control (Stellar SDK, Freighter, any wallet); do not modify it. ' +
+        SIGNING_CHECKS + ' ' +
+        'Expired, or submit failed: just call this tool again; it supersedes the old request and returns a fresh XDR (only refused while a signed one is still submitting). This server never sees your key. Then call stellar_wallet_submit_signed.',
       inputSchema: {
         fundingId: z.string().max(64).describe('fundingId of the order.'),
         walletAddress: z.string().max(80).describe('The order\'s receiving Stellar PUBLIC address (G...).'),
@@ -548,8 +563,8 @@ export function registerFundingTools(server: McpServer, opts: { fetchFn: FetchLi
           templateVersion: str(r.templateVersion, 64),
           operations: Array.isArray(r.operations) ? r.operations.slice(0, 30) : [],
           instructions: [
-            'Check operations: destination is your address, USDC numerically equals the current order.legs minimumAmount after repricing and matches the server template, XLM matches usdGas. Refuse anything else.',
-            'Sign the XDR unchanged with the walletAddress key, on the Public network, before expiresAt.',
+            SIGNING_CHECKS + ' Refuse anything else.',
+            'Sign the XDR unchanged with the walletAddress key, on the Public network, before expiresAt. If it expired, call stellar_wallet_get_signing_request again for a fresh one.',
             'Then call stellar_wallet_submit_signed with signingRequestId and the signed XDR (base64). Never paste a secret key anywhere.',
           ],
         });
@@ -565,7 +580,8 @@ export function registerFundingTools(server: McpServer, opts: { fetchFn: FetchLi
       title: 'Submit the signed Stellar transaction',
       description:
         'Submit the XDR your own wallet signed for a signing request. This is the claim: the account, trustline, USDC and XLM land in that one transaction. Submitting the same signed XDR again is safe (idempotent). ' +
-        'Accepts only the signed transaction envelope, never a secret key. "submitted" is not delivery: poll stellar_wallet_order_status until completed.',
+        'Accepts only the signed transaction envelope, never a secret key. "submitted" is not delivery: poll stellar_wallet_order_status until completed. ' +
+        'If it answers template_expired or failed, call stellar_wallet_get_signing_request again and sign the new XDR.',
       inputSchema: {
         signingRequestId: z.string().max(64).describe('signingRequestId from stellar_wallet_get_signing_request.'),
         signedXdr: z.string().max(20000).describe('Signed transaction envelope, base64, as returned by your wallet. NOT a secret key.'),

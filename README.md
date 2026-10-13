@@ -158,13 +158,23 @@ Steps:
    stellar_wallet_get_signing_request with fundingId and the receiving G address. Before signing check:
    networkPassphrase is "Public Global Stellar Network ; September 2015"; the operations create or use
    my address; the trustline and the claimed balance are USDC issued by
-   GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN; the claimed USDC minus the disclosed sponsor
-   fee payment equals the current stable leg minimumAmount from order status (it can differ from the quote
-   after repricing); the XLM payment to me matches my tier. Decode the XDR locally (code below) and
-   confirm every field, including operation sources, matches the operations list.
+   GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN; the claimed USDC (gross) equals the current
+   stable leg minimumAmount from order status plus the sponsor fee (it can differ from the quote after
+   repricing); the only payment out of my address is that sponsor fee in USDC to ROZO claim custody
+   GBLTI2TTQXUAYNKGCQ63YA55KTFEAOQJ3DPBPELNPWCJVE76ADWMXUAE (0.0000001 USDC with a paid XLM tier, the
+   quoted stellar_sponsor_fee with usdGas "0", none if my address needed no onboarding); the XLM payment
+   to me equals the XLM leg minimumAmount. The only operations allowed are: ROZO-sourced
+   beginSponsoringFutureReserves, createAccount and the XLM payment to me; from my address, changeTrust
+   (USDC), endSponsoringFutureReserves, claimClaimableBalance and that one fee payment. Refuse any other
+   operation (for example setOptions) or any other source. The transaction source must not be my address
+   (it is a ROZO channel account that pays the network fee).
+   The XDR shows only the claimable balance id: the claimed amount is in the operations list, and
+   https://horizon.stellar.org/claimable_balances/<id> confirms it. Decode the XDR locally (code below)
+   and confirm every field, including operation sources, matches the operations list.
 8. Sign with the code below and call stellar_wallet_submit_signed with signingRequestId and the signed
-   XDR. A signing request expires after about 5 minutes; if it expired or submit says failed, get a new
-   signing request and sign again. Submitting the same signed XDR twice is safe.
+   XDR. A signing request expires after about 5 minutes; if it expired or submit says failed, just call
+   stellar_wallet_get_signing_request again (it replaces the old one) and sign the new XDR. Submitting the
+   same signed XDR twice is safe.
 9. Keep polling until status is "completed" (every leg confirmed). Report the USDC and XLM delivered
    and each leg's txHash.
 
@@ -195,6 +205,10 @@ Node code (npm i @stellar/stellar-sdk), two small ES module files:
   if (!xdr) { console.error("signer ok"); process.exit(0); }
   const tx = TransactionBuilder.fromXDR(xdr, networkPassphrase);
   console.error(JSON.stringify({ source: tx.source, fee: tx.fee, operations: tx.operations }, null, 2));
+  // Expect: claimed gross = minimumAmount + sponsor fee; the only payment from <G address> is the sponsor fee
+  // in USDC to GBLTI2TTQXUAYNKGCQ63YA55KTFEAOQJ3DPBPELNPWCJVE76ADWMXUAE; the XLM payment to you = the XLM leg;
+  // no other operation types (no setOptions) and no other sources; tx.source is a ROZO channel, never <G address>.
+  // Anything else: do not sign.
   if (flag !== "--sign") process.exit(0);
   tx.sign(kp); // signs the server transaction as is, nothing is changed
   console.log(tx.toXDR()); // signed XDR, base64: pass it to stellar_wallet_submit_signed
