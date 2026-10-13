@@ -274,7 +274,12 @@ describe('native coins and Arbitrum', () => {
     for (const [id, sym] of [['1', 'ETH'], ['8453', 'ETH'], ['42161', 'ETH'], ['56', 'BNB'], ['137', 'POL']] as const) expect(by(id).decimals[sym]).toBe(18);
     expect(by('56').decimals.USDC).toBe(18);
     expect(by('1500').tokens).toEqual(['USDC']);
-    expect(text.toLowerCase()).not.toContain('beta');
+    // The only Beta mention is the ZEC pointer to its own page; nothing else
+    // (POL included) is labelled Beta.
+    const zecNote = 'ZEC on Zcash (Beta) is not available through this server: send a payer holding ZEC to https://checkout.rozo.ai/zec.';
+    expect(text).toContain(zecNote);
+    expect(text.replace(zecNote, '').toLowerCase()).not.toContain('beta');
+    expect(rows.some((r) => r.tokens.includes('ZEC'))).toBe(false);
   });
 
   it('quote_invoice offers a native coin only when the invoice lists it', async () => {

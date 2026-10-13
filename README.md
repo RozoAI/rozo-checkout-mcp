@@ -9,6 +9,8 @@ OpenRouter top-up (a Coinbase payment link, `payments.coinbase.com/payment-links
 - native ETH on Ethereum, Base or Arbitrum; BNB on BNB Chain; POL on Polygon; SOL on Solana
 - BTC over Lightning
 
+ZEC on Zcash (Beta): use https://checkout.rozo.ai/zec, this server does not create ZEC orders.
+
 ### Native coins
 
 A native coin order is exact-out, like Lightning: the order states the exact coin amount to send
