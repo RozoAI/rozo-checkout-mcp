@@ -1,0 +1,109 @@
+{
+  "quoteId": "b4f86888-fd9e-4216-b9f2-081ed9ae5f11",
+  "status": "quoted",
+  "mode": "stellar_onboarding",
+  "appId": "rozoNativeGas",
+  "userRef": "ip:test",
+  "createdAt": "2026-10-12T18:14:40.935Z",
+  "expiresAt": "2026-10-12T18:24:40.935Z",
+  "source": {
+    "chainId": "8453",
+    "assetId": "erc20:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+    "symbol": "USDC",
+    "amount": "10",
+    "valuationUsd": "9.99",
+    "priceUsd": "0.999728",
+    "priceAt": "2026-10-12T18:12:03.163Z"
+  },
+  "legs": [
+    {
+      "legId": "native",
+      "outputId": "native",
+      "kind": "native",
+      "chainId": "1500",
+      "assetId": "native",
+      "symbol": "XLM",
+      "receiverAddress": "RECEIVER_PLACEHOLDER",
+      "minimumAmount": "1.6",
+      "budgetUsd": "0.50",
+      "principalUsd": "0.50",
+      "nativePriceUsd": "0.1959",
+      "sourceAllocationAmount": "0.500136",
+      "stellar": {
+        "totalXlm": "1.6",
+        "reserveXlm": "0",
+        "spendableXlm": "1.6",
+        "actionKind": "onboarding_template"
+      },
+      "status": "planned",
+      "deliveredAmount": null,
+      "txHash": null
+    },
+    {
+      "legId": "stable",
+      "outputId": "stable",
+      "kind": "stable",
+      "chainId": "1500",
+      "assetId": "stellar:USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+      "symbol": "USDC",
+      "receiverAddress": "RECEIVER_PLACEHOLDER",
+      "minimumAmount": "9.4898612",
+      "principalUsd": "9.48",
+      "nativePriceUsd": null,
+      "sourceAllocationAmount": "9.499864",
+      "stellar": null,
+      "status": "planned",
+      "deliveredAmount": null,
+      "txHash": null
+    }
+  ],
+  "fees": [
+    {
+      "kind": "bridge_fee",
+      "usd": "0.01",
+      "refundable": true,
+      "appliesTo": "stable"
+    }
+  ],
+  "totals": {
+    "sourceValueUsd": "9.99",
+    "nativeBudgetsUsd": "0.50",
+    "stableDeliveryUsd": "9.48",
+    "sharedFeesUsd": "0.01",
+    "roundingRemainderUsd": "0.000001",
+    "roundingRemainderOwner": "rozo_disclosed",
+    "totalFeesUsd": "0.01"
+  },
+  "userActions": [
+    {
+      "kind": "pay_source",
+      "legIds": [],
+      "dueBy": "2026-10-12T18:24:40.935Z"
+    },
+    {
+      "kind": "sign_stellar_onboarding",
+      "legIds": [
+        "native",
+        "stable"
+      ],
+      "dueBy": null
+    }
+  ],
+  "dependencies": [
+    "stellar_user_signature"
+  ],
+  "planDigest": "155986efd7c1521f47a047da574b479caa41413f9681b5d3277793b48328f842",
+  "settlement": {
+    "type": "internal_settlement",
+    "note": "The source payment settles into a ROZO internal account. It is not a stablecoin output to the user."
+  },
+  "externalSourceFee": "unknown",
+  "configVersion": 1,
+  "confirmationGraceSeconds": 1800,
+  "ownershipProofId": null,
+  "signerProfileId": "js-stellar-sdk-local-key",
+  "usdGas": "0.5",
+  "gasAmount": "1.6",
+  "gasAsset": "XLM",
+  "gasDefaulted": true
+}
