@@ -1,6 +1,7 @@
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { srcFromRequestUrl } from './attribution';
 import { buildServer } from './server';
+import { clientForwardFrom } from './client-ip';
 import { agentKeyFromRequest } from './x402';
 import { SERVER_NAME, VERSION } from './version';
 
@@ -21,7 +22,12 @@ function json(body: unknown, status = 200): Response {
   return withCors(new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } }));
 }
 
-export async function handleMcp(request: Request, fetchFn: typeof fetch = fetch): Promise<Response> {
+export interface Env {
+  /** Same value as the Supabase secret and the intentapiv4 proxy (see client-ip.ts). Optional. */
+  ROZO_PROXY_SECRET?: string;
+}
+
+export async function handleMcp(request: Request, fetchFn: typeof fetch = fetch, env: Env = {}): Promise<Response> {
   // Stateless: a fresh server + transport per request, no session ids.
   // The optional x402 agent key travels as "Authorization: Bearer ak_..." on the
   // MCP request. It is forwarded to Rozo's x402 API only and never stored.
@@ -29,6 +35,7 @@ export async function handleMcp(request: Request, fetchFn: typeof fetch = fetch)
     fetchFn: (u, i) => fetchFn(u, i),
     src: srcFromRequestUrl(request.url),
     agentKey: agentKeyFromRequest(request),
+    forward: clientForwardFrom(request, env.ROZO_PROXY_SECRET),
   });
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
@@ -44,7 +51,7 @@ export async function handleMcp(request: Request, fetchFn: typeof fetch = fetch)
 }
 
 export default {
-  async fetch(request: Request): Promise<Response> {
+  async fetch(request: Request, env: Env = {}): Promise<Response> {
     const { pathname } = new URL(request.url);
     if (request.method === 'OPTIONS') return withCors(new Response(null, { status: 204 }));
     if (pathname === '/healthz') return json({ ok: true, name: SERVER_NAME, version: VERSION });
@@ -58,7 +65,7 @@ export default {
           }),
         );
       }
-      return handleMcp(request);
+      return handleMcp(request, fetch, env);
     }
     if (pathname === '/') {
       return json({
@@ -71,4 +78,4 @@ export default {
     }
     return json({ error: 'not_found' }, 404);
   },
-} satisfies ExportedHandler;
+} satisfies ExportedHandler<Env>;
