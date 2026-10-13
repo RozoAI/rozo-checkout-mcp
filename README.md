@@ -35,7 +35,7 @@ This server holds no private keys, signs nothing and sends nothing. It only:
 3. reads order status.
 
 The user pays from their own wallet. An order that is never funded expires and costs nothing.
-There are no secrets and no stored state; each request is handled statelessly. The two x402 tools
+No stored state; each request is handled statelessly. The only server secret is the IP-forwarding secret below. The two x402 tools
 are the one exception to "no auth": they forward the caller's own agent key (see below) to Rozo and
 nothing else.
 
@@ -310,6 +310,12 @@ curl -s -X POST 'http://127.0.0.1:8787/mcp?src=dev' \
 Deployment needs owner approval and is not automated here (merging does not deploy). `wrangler.toml`
 pins the Cloudflare account that owns the `rozo.ai` zone and the `mcp.rozo.ai` custom domain route, so a
 deploy is `npx wrangler deploy` from a clean checkout of `main`.
+
+Worker secret `ROZO_PROXY_SECRET` (optional): lets `/funding/*` calls forward the caller IP so keyless
+users are not one user (`src/client-ip.ts`). Its value is the MCP-only Supabase secret
+`ROZO_PROXY_SECRET_MCP`, not the shared proxy secret of intentapiv4/apiv2. It rotates independently, in two
+places: `supabase secrets set ROZO_PROXY_SECRET_MCP` (rozo-intents-api) and
+`npx wrangler secret put ROZO_PROXY_SECRET` here. Unset = no forwarding, nothing breaks.
 
 ## MCP registry
 
