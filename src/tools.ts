@@ -125,7 +125,8 @@ function nativeMinUsd(quote: any, chainId: string, symbol: string): number {
 const NATIVE_NOTE =
   'Native coins (ETH on Ethereum, Base, Arbitrum; BNB on BNB Chain; POL on Polygon; SOL on Solana) are exact-out like Lightning: ' +
   'the order states the exact coin amount, priced at the current rate plus an FX spread on top of the service fee, and that price holds only until quoteExpiresAt. ' +
-  `Native orders are capped at $${NATIVE_MAX_USD} per invoice (native ETH on Ethereum needs at least $1), and a native coin is offered only when quote_invoice lists it for that invoice.`;
+  `Native orders are capped at $${NATIVE_MAX_USD} per invoice (native ETH on Ethereum needs at least $1), and a native coin is offered only when quote_invoice lists it for that invoice. ` +
+  'ZEC on Zcash (Beta) is not available through this server: send a payer holding ZEC to https://checkout.rozo.ai/zec.';
 
 const linkUrlSchema = z
   .string()
