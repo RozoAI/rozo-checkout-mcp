@@ -94,6 +94,30 @@ describe('funding_capabilities', () => {
   });
 });
 
+describe('fee disclosure and rozoAccounts pass-through (2026-10-14)', () => {
+  const CUSTODY = 'GBLTI2TTQXUAYNKGCQ63YA55KTFEAOQJ3DPBPELNPWCJVE76ADWMXUAE';
+  it('passes rozoAccounts G addresses only', async () => {
+    const withAccounts = { ...caps, rozoAccounts: { stellar: { claimCustody: CUSTODY, reserveSponsor: RECEIVER, xlmPayer: 'not-an-address', transactionSources: [RECEIVER, 'SBAD', 42] } } };
+    const { fn } = mockFetch({ 'GET /capabilities': () => reply(withAccounts) });
+    const { payload } = await call('funding_capabilities', {}, fn);
+    expect(payload.rozoAccounts).toEqual({ claimCustody: CUSTODY, reserveSponsor: RECEIVER, xlmPayer: null, transactionSources: [RECEIVER] });
+    const { fn: fn2 } = mockFetch({ 'GET /capabilities': () => reply(caps) });
+    expect((await call('funding_capabilities', {}, fn2)).payload.rozoAccounts).toBeNull();
+  });
+  it('passes usdExact, amount, asset, description and the reconciliation totals', async () => {
+    const fees = [
+      { kind: 'bridge_fee', usd: '0.01', usdExact: '0.010000', refundable: true, appliesTo: 'stable' },
+      { kind: 'stellar_sponsor_fee', usd: '0.00', usdExact: '0.000000', refundable: true, appliesTo: 'stable', amount: '0.0000001', asset: 'USDC', description: 'x' },
+      { kind: 'source_price_adjustment', usd: '0.00', usdExact: '-0.000200', refundable: false, appliesTo: 'source', description: 'y' },
+    ];
+    const totals = { ...QUOTE.totals, sourceFaceUsd: '10.000000', deliveredUsd: '9.800000', totalDeductionsUsd: '0.200000' };
+    const { fn } = mockFetch({ 'GET /capabilities': () => reply(caps), 'POST /quotes': () => reply({ ...QUOTE, fees, totals }, 201) });
+    const { payload } = await call('stellar_wallet_quote', { receiverAddress: RECEIVER, sourceChain: 'base', amountUsd: '10' }, fn);
+    expect(payload.fees).toEqual(fees);
+    expect(payload.totals).toMatchObject({ sourceFaceUsd: '10.000000', deliveredUsd: '9.800000', totalDeductionsUsd: '0.200000' });
+  });
+});
+
 describe('stellar_wallet_quote', () => {
   it('builds the stellar_onboarding body from capabilities and returns the quote fees', async () => {
     const { fn, calls } = mockFetch({ 'GET /capabilities': () => reply(caps), 'POST /quotes': () => reply(QUOTE, 201) });

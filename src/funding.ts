@@ -83,7 +83,10 @@ export const SIGNING_CHECKS =
   `Amounts: the claimed USDC (gross) equals the current stable leg minimumAmount (order.legs, after repricing) plus the sponsor fee; ` +
   `the sponsor fee is fixed at quote time (0.0000001 USDC with a paid usdGas tier, the quoted stellar_sponsor_fee with usdGas "0", no fee payment if the address needed no onboarding); ` +
   `the XLM payment equals the native (XLM) leg minimumAmount. ` +
-  `The XDR shows only the claimable balance id; its amount is in the operations list and on Horizon /claimable_balances/{id}.`;
+  `The XDR shows only the claimable balance id; its amount is in the operations list and on Horizon /claimable_balances/{id}. ` +
+  `The hash of the locally decoded transaction (tx.hash() as hex) must equal the txHash of this signing request. ` +
+  `Every ROZO-sourced operation and the transaction source must be one of funding_capabilities rozoAccounts (reserveSponsor, xlmPayer, transactionSources). ` +
+  `Do not echo fundingId into logs.`;
 
 type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean };
 
@@ -201,8 +204,28 @@ export async function fundingRequest(
 
 function feeLines(fees: unknown) {
   return Array.isArray(fees)
-    ? fees.slice(0, 20).map((f: any) => ({ kind: str(f?.kind, 64), usd: str(f?.usd, 32), appliesTo: str(f?.appliesTo, 32), refundable: f?.refundable ?? null }))
+    ? fees.slice(0, 20).map((f: any) => {
+      const line: Record<string, unknown> = { kind: str(f?.kind, 64), usd: str(f?.usd, 32), appliesTo: str(f?.appliesTo, 32), refundable: f?.refundable ?? null };
+      // Additive upstream fields (2026-10-14): 6 dp value, exact asset amount, plain-language note.
+      for (const [k, max] of [['usdExact', 32], ['amount', 40], ['asset', 16], ['description', 300]] as const) {
+        const v = str(f?.[k], max);
+        if (v !== null) line[k] = v;
+      }
+      return line;
+    })
     : [];
+}
+
+/** ROZO's own Stellar accounts in the onboarding transaction, G addresses only. */
+function rozoStellarAccounts(a: any) {
+  if (!a || typeof a !== 'object') return null;
+  const g = (v: unknown) => (typeof v === 'string' && G_ADDRESS_RE.test(v) ? v : null);
+  return {
+    claimCustody: g(a.claimCustody),
+    reserveSponsor: g(a.reserveSponsor),
+    xlmPayer: g(a.xlmPayer),
+    transactionSources: Array.isArray(a.transactionSources) ? a.transactionSources.slice(0, 20).map(g).filter((x: string | null) => x !== null) : [],
+  };
 }
 
 function legView(l: any) {
@@ -227,6 +250,11 @@ function totals(t: any) {
   if (!t || typeof t !== 'object') return null;
   const out: Record<string, string | null> = {};
   for (const k of ['sourceValueUsd', 'nativeBudgetsUsd', 'stableDeliveryUsd', 'sharedFeesUsd', 'totalFeesUsd', 'roundingRemainderUsd']) out[k] = str(t[k], 32);
+  // Additive upstream reconciliation (2026-10-14): Σ fees[].usdExact + roundingRemainderUsd = totalDeductionsUsd.
+  for (const k of ['sourceFaceUsd', 'deliveredUsd', 'totalDeductionsUsd']) {
+    const v = str(t[k], 32);
+    if (v !== null) out[k] = v;
+  }
   return out;
 }
 
@@ -317,6 +345,7 @@ export function registerFundingTools(server: McpServer, opts: { fetchFn: FetchLi
             : [],
           stellarUsdc: Array.isArray(c.stableOutputs) ? (c.stableOutputs.find((s: any) => String(s?.chainId) === STELLAR_CHAIN_ID) ?? null) : null,
           gasOptions: c.gasOptions?.[STELLAR_CHAIN_ID] ?? null,
+          rozoAccounts: rozoStellarAccounts(c.rozoAccounts?.stellar),
           limits: c.limits ?? null,
           acceptedDepositTokens: ACCEPTED_DEPOSIT_TOKENS,
           validUntil: str(c.validUntil, 40),
