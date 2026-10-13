@@ -68,7 +68,7 @@ export const FUNDING_FACTS =
   'Fees come from the quote (fees and totals): never assume a fee. ' +
   'The receiving Stellar address signs ONE transaction (only when it is new or has no USDC trustline). ' +
   'The one-time deposit address is the same on Base, Ethereum, Arbitrum and Polygon; USDC or USDT is accepted 1:1. ' +
-  'Pay the EXACT deposit amount once, before payBefore. This server never holds keys: your own wallet pays and signs.';
+  'Follow deposit.amountPolicy: exact or missing means pay the EXACT deposit amount; any_amount uses the suggested amount and returned min/max bounds. Pay once, before payBefore. This server never holds keys: your own wallet pays and signs.';
 
 type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean };
 
@@ -215,9 +215,34 @@ function totals(t: any) {
   return out;
 }
 
+function amountPolicyView(d: any) {
+  const decimal = (v: unknown): string | null => typeof v === 'string' && v.length <= 40 && /^\d+(\.\d+)?$/.test(v) && Number(v) > 0 ? v : null;
+  return {
+    amountPolicy: d?.amountPolicy === 'any_amount' ? 'any_amount' : 'exact',
+    minAcceptedAmount: decimal(d?.minAcceptedAmount),
+    maxPricedAmount: decimal(d?.maxPricedAmount),
+  };
+}
+
+function paymentInstruction(d: ReturnType<typeof depositView>): string {
+  if (d?.amountPolicy === 'any_amount' && d.minAcceptedAmount && d.maxPricedAmount) {
+    return `Suggested amount: ${d.amount}. Send once before ${d.payBefore ?? 'payBefore'}. Payments from ${d.minAcceptedAmount} are priced on the amount received up to ${d.maxPricedAmount}; the XLM tier stays the same and USDC adjusts after frozen fees. Below the minimum needs manual handling; excess above the maximum needs manual handling. Some amounts may require recovery if output constraints cannot be met. Do not pay twice.`;
+  }
+  if (d?.amountPolicy === 'any_amount') return 'The payment range is incomplete. Do not pay; poll the order or contact ROZO for the current payment instructions.';
+  return `Send EXACTLY ${d?.amount ?? 'deposit.amount'} once, before ${d?.payBefore ?? 'payBefore'}. Do not pay twice.`;
+}
+
+function repricingView(r: any) {
+  if (!r || typeof r !== 'object') return null;
+  const out: Record<string, string | null> = {};
+  for (const k of ['quotedAmount', 'receivedAmount', 'pricedAmount', 'excessAmount', 'quotedPlanDigest']) out[k] = str(r[k], k === 'quotedPlanDigest' ? 64 : 40);
+  return out;
+}
+
 function depositView(d: any) {
   if (!d || typeof d !== 'object') return null;
   return {
+    ...amountPolicyView(d),
     address: str(d.address, 128),
     amount: str(d.amount, 40),
     symbol: str(d.symbol, 16),
@@ -228,13 +253,13 @@ function depositView(d: any) {
   };
 }
 
-function orderGuidance(status: string | null, pending: ReturnType<typeof actions>): string {
+function orderGuidance(status: string | null, pending: ReturnType<typeof actions>, deposit?: ReturnType<typeof depositView>): string {
   if (pending.some((a) => a.kind === 'sign_stellar_onboarding')) {
     return 'Signature needed: call stellar_wallet_get_signing_request with fundingId and the receiving G address, sign the XDR with that wallet (do not modify it), then stellar_wallet_submit_signed.';
   }
   switch (status) {
     case 'awaiting_payment':
-      return 'Awaiting the deposit. If you have not paid, send EXACTLY deposit.amount once, before payBefore. Do not pay twice. Poll again in about 15 seconds.';
+      return `Awaiting the deposit. If you have not paid, ${paymentInstruction(deposit ?? null)} Poll again in about 15 seconds.`;
     case 'source_confirming':
     case 'funds_confirmed':
     case 'executing':
@@ -346,7 +371,7 @@ export function registerFundingTools(server: McpServer, opts: { fetchFn: FetchLi
           planDigest: str(q.planDigest, 64),
           expiresAt: str(q.expiresAt, 40),
           sourceChain,
-          source: { chainId, amount: str(q.source?.amount, 32), symbol: str(q.source?.symbol, 16), valuationUsd: str(q.source?.valuationUsd, 32) },
+          source: { ...amountPolicyView(q.source), chainId, amount: str(q.source?.amount, 32), symbol: str(q.source?.symbol, 16), valuationUsd: str(q.source?.valuationUsd, 32) },
           receiverAddress: addr,
           receives: {
             usdcMinimum: stable?.minimumAmount ?? null,
@@ -373,7 +398,7 @@ export function registerFundingTools(server: McpServer, opts: { fetchFn: FetchLi
     {
       title: 'Create a Stellar wallet funding order',
       description:
-        'Turn an approved quote into a payable order. Returns fundingId (keep it private: it is the only handle to the order), the one-time deposit address, the exact amount, payBefore and the accepted chains and tokens. ' +
+        'Turn an approved quote into a payable order. Returns fundingId (keep it private: it is the only handle to the order), the one-time deposit address, the suggested amount and amountPolicy with minAcceptedAmount/maxPricedAmount when any_amount, payBefore and the accepted chains and tokens. ' +
         'orderId is your own reference: the server derives the upstream order id and Idempotency-Key from quoteId plus orderId, so it only has to be unique among your own orders. Retrying with the same quoteId and orderId returns the same order instead of a second one. Creates an order but moves no funds; an unpaid order expires at no cost. ' +
         FUNDING_FACTS,
       inputSchema: {
@@ -407,13 +432,14 @@ export function registerFundingTools(server: McpServer, opts: { fetchFn: FetchLi
           return fail('ORDER_NOT_PAYABLE', `This order is "${orderStatus ?? 'unknown'}"${Number.isFinite(payBeforeMs) && payBeforeMs <= now() ? ' and past payBefore' : ''}. Do NOT send a deposit. Poll stellar_wallet_order_status; for a new funding, quote again with a new orderId.`, {
             ...base,
             status: orderStatus,
-            guidance: orderGuidance(orderStatus, actions(o.pendingActions)),
+            guidance: orderGuidance(orderStatus, actions(o.pendingActions), deposit),
           });
         }
         return ok({
           ...base,
           status: orderStatus,
           deposit: {
+            ...amountPolicyView(deposit),
             address: deposit.address,
             amount: deposit.amount,
             payBefore: deposit.payBefore,
@@ -427,8 +453,8 @@ export function registerFundingTools(server: McpServer, opts: { fetchFn: FetchLi
           totals: totals(o.totals),
           pendingActions: actions(o.pendingActions),
           instructions: [
-            `Send EXACTLY ${deposit.amount} USDC or USDT (1:1) to ${deposit.address} from your own wallet, ONCE, on ONE of Base, Ethereum, Arbitrum or Polygon, before ${deposit.payBefore ?? 'payBefore'}.`,
-            'Other chains (for example BNB Chain) or other tokens are not delivered. A short, late or over payment needs manual handling.',
+            `${paymentInstruction(deposit)} Use USDC or USDT (1:1) to ${deposit.address} from your own wallet on ONE of Base, Ethereum, Arbitrum or Polygon.`,
+            'Other chains or tokens, late payments and second payments need manual handling. Follow the returned amountPolicy and bounds.',
             'Save fundingId and orderId before paying. After a crash, poll stellar_wallet_order_status; never create a new order for the same intent.',
             'Then poll stellar_wallet_order_status. If it asks for a signature, use stellar_wallet_get_signing_request.',
           ],
@@ -470,11 +496,12 @@ export function registerFundingTools(server: McpServer, opts: { fetchFn: FetchLi
             ? { status: str(o.source.status, 32), receivedAmount: str(o.source.receivedAmount ?? o.source.amountReceived, 40), txHash: str(o.source.txHash, 128), chainId: str(o.source.chainId, 16), symbol: str(o.source.symbol, 16) }
             : null,
           legs: Array.isArray(o.legs) ? o.legs.map(legView) : [],
+          repricing: repricingView(o.repricing),
           recovery: o.recovery ?? null,
           updatedAt: str(o.updatedAt, 40),
           guidance: windowClosed
             ? 'The payment window (payBefore) has closed. Do NOT send a deposit now: a late payment is not delivered automatically. If you already sent one, keep polling; otherwise quote again with a new orderId.'
-            : orderGuidance(status, pendingActions),
+            : orderGuidance(status, pendingActions, dep),
           support: SUPPORT,
         });
       } catch (err) {
@@ -490,7 +517,7 @@ export function registerFundingTools(server: McpServer, opts: { fetchFn: FetchLi
       description:
         'When an order shows sign_stellar_onboarding, build the one transaction the receiving address must sign (creates the account if needed, adds the USDC trustline, claims the USDC, delivers XLM). ' +
         'Returns signingRequestId, the unsigned XDR, networkPassphrase, a readable operations list and expiresAt (at most 5 minutes). ' +
-        'Sign it with the receiver wallet YOU control (Stellar SDK, Freighter, any wallet); do not modify it. Check the operations first: your address, USDC at least the quoted minimum, the XLM from usdGas. This server never sees your key. Then call stellar_wallet_submit_signed.',
+        'Sign it with the receiver wallet YOU control (Stellar SDK, Freighter, any wallet); do not modify it. Check the operations first: your address, USDC matches the current order.legs minimumAmount after repricing and the server template, the XLM from usdGas. This server never sees your key. Then call stellar_wallet_submit_signed.',
       inputSchema: {
         fundingId: z.string().max(64).describe('fundingId of the order.'),
         walletAddress: z.string().max(80).describe('The order\'s receiving Stellar PUBLIC address (G...).'),
@@ -520,7 +547,7 @@ export function registerFundingTools(server: McpServer, opts: { fetchFn: FetchLi
           templateVersion: str(r.templateVersion, 64),
           operations: Array.isArray(r.operations) ? r.operations.slice(0, 30) : [],
           instructions: [
-            'Check operations: destination is your address, USDC is at least the quoted minimum, XLM matches usdGas. Refuse anything else.',
+            'Check operations: destination is your address, USDC matches the current order.legs minimumAmount after repricing and the server template, XLM matches usdGas. Refuse anything else.',
             'Sign the XDR unchanged with the walletAddress key, on the Public network, before expiresAt.',
             'Then call stellar_wallet_submit_signed with signingRequestId and the signed XDR (base64). Never paste a secret key anywhere.',
           ],
