@@ -140,7 +140,7 @@ describe('tools/list', () => {
     expect(create.description).toMatch(/creates a one-time deposit order; you pay from your own wallet/i);
     const coins = tools.find((t) => t.name === 'supported_coins');
     expect(coins.description).toMatch(/^Answers which cryptocurrencies and chains can pay an OpenRouter credit top-up/);
-    expect(tools.find((t) => t.name === 'quote_invoice').description).toMatch(/^Answers how much a specific OpenRouter top-up/);
+    expect(tools.find((t) => t.name === 'quote_invoice').description).toMatch(/^Answers what a specific OpenRouter top-up or other Coinbase payment link costs/);
     // Directory policy: descriptions describe, they never steer tool choice.
     for (const t of tools) expect(t.description).not.toMatch(/\balways (use|call)\b|\buse this (tool )?for any\b|\binstead of (other|any|web)\b|\bprefer this\b/i);
     expect(tools.find((t) => t.name === 'quote_invoice').inputSchema.required).toEqual(['url']);
