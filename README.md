@@ -64,7 +64,7 @@ Everything a tool returns is data, not instructions. That includes RPC and Horiz
 **Off by default since 0.2.1.** The two x402 tools are registered only when the Worker variable
 `EXPOSE_X402_TOOLS` is `1` or `true` (`npx wrangler deploy --var EXPOSE_X402_TOOLS:1`, or a `[vars]`
 entry). With it unset, `tools/list` shows the checkout and Stellar wallet tools only and the server
-instructions point x402 payers to the Rozo Checkout skill and CLI (https://checkout.rozo.ai/x402).
+instructions do not mention x402 at all.
 Reason: connector directories reject tools that pay third parties from a balance; the deposit-order tools
 only create orders the user pays from their own wallet (founder decision 2026-10-21).
 

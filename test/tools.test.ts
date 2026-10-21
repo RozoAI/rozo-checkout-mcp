@@ -72,8 +72,8 @@ describe('tools/list', () => {
       'supported_coins',
     ]);
     const init = await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '0' } }, fn);
-    expect(init.result.instructions).toMatch(/x402 APIs are not available through this server/);
-    expect(init.result.instructions).not.toMatch(/x402_sign returns/);
+    expect(init.result.instructions).not.toMatch(/x402/i);
+    expect(init.result.instructions).toMatch(/Stellar wallet: funding_capabilities/);
   });
 
   it('x402 tools stay hidden for "0" / "false" and appear for "1" / "true"', async () => {
@@ -86,6 +86,18 @@ describe('tools/list', () => {
       const out = await rpc('tools/list', {}, fn, 'test-chan', { EXPOSE_X402_TOOLS: v });
       expect((out.result.tools as any[]).filter((t) => String(t.name).startsWith('x402_')).map((t) => t.name).sort()).toEqual(['x402_sign', 'x402_topup']);
     }
+  });
+
+  it('server instructions mention x402 only when the x402 tools are exposed', async () => {
+    const { fn } = mockFetch();
+    const init = (env: Env) => rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '0' } }, fn, 'test-chan', env);
+    for (const v of ['', '0', 'false']) {
+      expect((await init({ EXPOSE_X402_TOOLS: v })).result.instructions).not.toMatch(/x402/i);
+    }
+    expect((await init({})).result.instructions).not.toMatch(/x402/i);
+    const on = (await init({ EXPOSE_X402_TOOLS: '1' })).result.instructions;
+    expect(on).toMatch(/x402_sign returns a PAYMENT-SIGNATURE/);
+    expect(on).toMatch(/Stellar wallet: funding_capabilities/);
   });
 
   it('tools/call on a hidden x402 tool fails without any upstream call', async () => {
