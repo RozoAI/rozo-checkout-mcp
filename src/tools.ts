@@ -141,7 +141,9 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     {
       title: 'Supported coins',
       description:
-        'List the coins and chains you can pay an OpenRouter (Coinbase) invoice with through Rozo: USDC/USDT, native coins and BTC over Lightning, with token decimals. Static list, no network call; quote_invoice tells which native coins a given invoice accepts. ' +
+        'Answers which cryptocurrencies and chains can pay an OpenRouter credit top-up or another Coinbase payment link through Rozo Checkout, without a Coinbase account: ' +
+        'USDC and USDT on Ethereum, BNB Chain, Polygon, Arbitrum and Solana; USDC on Base and Stellar; native ETH (Ethereum, Base, Arbitrum), BNB, POL and SOL; BTC over Lightning. ' +
+        'Returns each chain id, token symbol and token decimals. Static list, needs no payment link and makes no network call; quote_invoice reports which of these a specific invoice accepts. ' +
         NATIVE_NOTE,
       inputSchema: {},
       annotations: { title: 'Supported coins', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -154,7 +156,9 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     {
       title: 'Quote a Coinbase invoice',
       description:
-        'Look up a Coinbase payment link (e.g. an OpenRouter top-up) and return the merchant, invoice amount, what the payer pays, the link expiry, whether it is still payable and supportedSources: the coins THIS invoice can be paid with. Offer a native coin (ETH, BNB, POL, SOL) only when it appears there. Creates nothing and moves no funds.',
+        'Answers what a specific OpenRouter top-up or other Coinbase payment link charges, whether it can still be paid through Rozo Checkout, and which coins can pay it. ' +
+        'Takes the link URL and returns the merchant, invoice amount, callerPays (the USD amount the invoice charges), the link expiry, payability and supportedSources: the coins THIS invoice can be paid with. ' +
+        'The exact amount to send in a given coin, including the service fee, bridge and network fees, or the FX spread on a native coin, comes from create_deposit_order. Offer a native coin (ETH, BNB, POL, SOL) only when it appears in supportedSources. Creates nothing and moves no funds.',
       inputSchema: { url: linkUrlSchema },
       annotations: { title: 'Quote a Coinbase invoice', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
