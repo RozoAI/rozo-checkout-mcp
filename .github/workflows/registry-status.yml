@@ -1,0 +1,41 @@
+name: Update MCP Registry version status
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Server version to update (for example 0.1.0)
+        required: true
+      status:
+        description: New status
+        required: true
+        type: choice
+        options: [deprecated, active]
+      message:
+        description: Optional message shown with the status
+        required: false
+        default: ""
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  status:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install mcp-publisher
+        run: |
+          curl -sL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/').tar.gz" | tar xz mcp-publisher
+          sudo mv mcp-publisher /usr/local/bin/
+          mcp-publisher --version
+      - name: Login (GitHub OIDC, namespace io.github.rozoai)
+        run: mcp-publisher login github-oidc
+      - name: Update status
+        env:
+          VERSION: ${{ inputs.version }}
+          STATUS: ${{ inputs.status }}
+          MESSAGE: ${{ inputs.message }}
+        run: |
+          case "$VERSION" in (*[!0-9.]*|"") echo "bad version"; exit 1;; esac
+          mcp-publisher status --status "$STATUS" --message "$MESSAGE" io.github.RozoAI/checkout "$VERSION"
