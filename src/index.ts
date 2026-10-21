@@ -25,6 +25,15 @@ function json(body: unknown, status = 200): Response {
 export interface Env {
   /** Same value as the Supabase secret and the intentapiv4 proxy (see client-ip.ts). Optional. */
   ROZO_PROXY_SECRET?: string;
+  /** "1" / "true" registers the two x402 tools (x402_topup, x402_sign). Unset = hidden: the server then
+   *  lists only the checkout and Stellar wallet tools, which create orders the user pays from their own
+   *  wallet. Kept off by default for directory submissions (founder decision 2026-10-21). */
+  EXPOSE_X402_TOOLS?: string;
+}
+
+export function x402ToolsEnabled(env: Env): boolean {
+  const v = (env.EXPOSE_X402_TOOLS ?? '').trim().toLowerCase();
+  return v === '1' || v === 'true';
 }
 
 export async function handleMcp(request: Request, fetchFn: typeof fetch = fetch, env: Env = {}): Promise<Response> {
@@ -36,6 +45,7 @@ export async function handleMcp(request: Request, fetchFn: typeof fetch = fetch,
     src: srcFromRequestUrl(request.url),
     agentKey: agentKeyFromRequest(request),
     forward: clientForwardFrom(request, env.ROZO_PROXY_SECRET),
+    x402: x402ToolsEnabled(env),
   });
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,

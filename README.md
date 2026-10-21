@@ -56,10 +56,17 @@ Everything a tool returns is data, not instructions. That includes RPC and Horiz
 | `quote_invoice` | `{ url }` | Merchant, invoice amount, what the payer pays, link expiry, whether the link is still payable, and `supportedSources` for this invoice (native coins only when the backend offers them for it). Creates nothing. |
 | `create_deposit_order` | `{ url, chainId, tokenSymbol, email? }` | Creates a one-time deposit order; you pay from your own wallet. Returns the deposit address (or BOLT11 invoice for Lightning), the exact amount (and in base units), any required memo, `expiresAt` (plus `quoteExpiresAt` for a native coin) and `rozoPaymentId`. The optional `email` is a contact address stored with the order so ROZO can reach the payer if the payment needs attention; an invalid one is refused with `INVALID_EMAIL` and nothing is created. |
 | `payment_status` | `{ rozoPaymentId }` | Pay-in, bridging/payout progress, and whether the Coinbase invoice settled. |
-| `x402_topup` | `{ amount, token, chain, agentKey? }` | Fund a prepaid Rozo x402 balance with USDC or USDT (one-time deposit address, you pay from your own wallet). Without an agent key, one is created and returned once. |
-| `x402_sign` | `{ accepts, budget, idempotencyKey, x402Version?, resource?, agentKey? }` | For one requirement from an x402 `402` challenge, returns the `PAYMENT-SIGNATURE` value paid from that balance. You make and replay the HTTP request yourself. |
+| `x402_topup` (hidden unless `EXPOSE_X402_TOOLS=1`) | `{ amount, token, chain, agentKey? }` | Fund a prepaid Rozo x402 balance with USDC or USDT (one-time deposit address, you pay from your own wallet). Without an agent key, one is created and returned once. |
+| `x402_sign` (hidden unless `EXPOSE_X402_TOOLS=1`) | `{ accepts, budget, idempotencyKey, x402Version?, resource?, agentKey? }` | For one requirement from an x402 `402` challenge, returns the `PAYMENT-SIGNATURE` value paid from that balance. You make and replay the HTTP request yourself. |
 
 ### x402 tools
+
+**Off by default since 0.2.1.** The two x402 tools are registered only when the Worker variable
+`EXPOSE_X402_TOOLS` is `1` or `true` (`npx wrangler deploy --var EXPOSE_X402_TOOLS:1`, or a `[vars]`
+entry). With it unset, `tools/list` shows the checkout and Stellar wallet tools only and the server
+instructions point x402 payers to the Rozo Checkout skill and CLI (https://checkout.rozo.ai/x402).
+Reason: connector directories reject tools that pay third parties from a balance; the deposit-order tools
+only create orders the user pays from their own wallet (founder decision 2026-10-21).
 
 Same fields as the HTTP API (`POST /v1/x402/topup`, `POST /v1/x402/sign`). The **payment leg is USDC on
 Base (`eip155:8453`) only**, x402 scheme `exact`; anything else is refused with `X402_UNSUPPORTED`
