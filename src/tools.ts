@@ -156,9 +156,9 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     {
       title: 'Quote a Coinbase invoice',
       description:
-        'Answers what a specific OpenRouter top-up or other Coinbase payment link costs in USD through Rozo Checkout, whether it can still be paid, and which coins can pay it. ' +
-        'Takes the link URL and returns the merchant, invoice amount, callerPays (the USD amount including the Rozo service fee), the link expiry, payability and supportedSources: the coins THIS invoice can be paid with. ' +
-        'The exact amount to send in a given coin, including bridge and network fees or the FX spread on a native coin, comes from create_deposit_order. Offer a native coin (ETH, BNB, POL, SOL) only when it appears in supportedSources. Creates nothing and moves no funds.',
+        'Answers what a specific OpenRouter top-up or other Coinbase payment link charges, whether it can still be paid through Rozo Checkout, and which coins can pay it. ' +
+        'Takes the link URL and returns the merchant, invoice amount, callerPays (the USD amount the invoice charges), the link expiry, payability and supportedSources: the coins THIS invoice can be paid with. ' +
+        'The exact amount to send in a given coin, including the service fee, bridge and network fees, or the FX spread on a native coin, comes from create_deposit_order. Offer a native coin (ETH, BNB, POL, SOL) only when it appears in supportedSources. Creates nothing and moves no funds.',
       inputSchema: { url: linkUrlSchema },
       annotations: { title: 'Quote a Coinbase invoice', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
