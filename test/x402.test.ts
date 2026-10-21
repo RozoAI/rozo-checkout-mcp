@@ -36,7 +36,7 @@ async function call(name: string, args: unknown, fetchFn: typeof fetch, authKey?
     },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
   });
-  const res = await handleMcp(req, fetchFn);
+  const res = await handleMcp(req, fetchFn, { EXPOSE_X402_TOOLS: '1' });
   expect(res.status).toBe(200);
   const out = (await res.json()) as any;
   const text = out.result.content[0].text as string;
@@ -62,7 +62,7 @@ describe('tool descriptions', () => {
       headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'mcp-protocol-version': '2025-06-18' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
     });
-    const tools = ((await (await handleMcp(req, fn)).json()) as any).result.tools as any[];
+    const tools = ((await (await handleMcp(req, fn, { EXPOSE_X402_TOOLS: '1' })).json()) as any).result.tools as any[];
     for (const name of ['x402_topup', 'x402_sign']) {
       const t = tools.find((x) => x.name === name);
       expect(t.description).toMatch(/USDC on Base \(eip155:8453\) only/);

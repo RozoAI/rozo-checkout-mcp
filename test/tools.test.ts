@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { handleMcp } from '../src/index';
+import { handleMcp, type Env } from '../src/index';
 import { MPP_BASE, INTENTS_BASE } from '../src/api';
 import { CLIENT_LABEL } from '../src/version';
 
@@ -43,21 +43,61 @@ function mockFetch(overrides: { payment?: any; quote?: Record<string, unknown> }
   return { fn: fn as unknown as typeof fetch, calls };
 }
 
-async function rpc(method: string, params: unknown, fetchFn: typeof fetch, src = 'test-chan') {
+async function rpc(method: string, params: unknown, fetchFn: typeof fetch, src = 'test-chan', env: Env = {}) {
   const req = new Request(`https://mcp.rozo.ai/mcp?src=${src}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'mcp-protocol-version': '2025-06-18' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
   });
-  const res = await handleMcp(req, fetchFn);
+  const res = await handleMcp(req, fetchFn, env);
   expect(res.status).toBe(200);
   return (await res.json()) as any;
 }
 
 describe('tools/list', () => {
-  it('exposes the checkout tools and the two x402 tools with titles and JSON schemas', async () => {
+  it('hides the two x402 tools by default (EXPOSE_X402_TOOLS unset)', async () => {
     const { fn } = mockFetch();
     const out = await rpc('tools/list', {}, fn);
+    const names = (out.result.tools as any[]).map((t) => t.name).sort();
+    expect(names).toEqual([
+      'create_deposit_order',
+      'funding_capabilities',
+      'payment_status',
+      'quote_invoice',
+      'stellar_wallet_create_order',
+      'stellar_wallet_get_signing_request',
+      'stellar_wallet_order_status',
+      'stellar_wallet_quote',
+      'stellar_wallet_submit_signed',
+      'supported_coins',
+    ]);
+    const init = await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '0' } }, fn);
+    expect(init.result.instructions).toMatch(/x402 APIs are not available through this server/);
+    expect(init.result.instructions).not.toMatch(/x402_sign returns/);
+  });
+
+  it('x402 tools stay hidden for "0" / "false" and appear for "1" / "true"', async () => {
+    const { fn } = mockFetch();
+    for (const v of ['0', 'false', 'no']) {
+      const out = await rpc('tools/list', {}, fn, 'test-chan', { EXPOSE_X402_TOOLS: v });
+      expect((out.result.tools as any[]).some((t) => String(t.name).startsWith('x402_'))).toBe(false);
+    }
+    for (const v of ['1', 'true', ' TRUE ']) {
+      const out = await rpc('tools/list', {}, fn, 'test-chan', { EXPOSE_X402_TOOLS: v });
+      expect((out.result.tools as any[]).filter((t) => String(t.name).startsWith('x402_')).map((t) => t.name).sort()).toEqual(['x402_sign', 'x402_topup']);
+    }
+  });
+
+  it('tools/call on a hidden x402 tool fails without any upstream call', async () => {
+    const { fn, calls } = mockFetch();
+    const out = await rpc('tools/call', { name: 'x402_sign', arguments: { accepts: {}, budget: '1', idempotencyKey: 'k' } }, fn);
+    expect(out.error ?? out.result?.isError).toBeTruthy();
+    expect(calls).toHaveLength(0);
+  });
+
+  it('exposes the checkout tools and the two x402 tools with titles and JSON schemas', async () => {
+    const { fn } = mockFetch();
+    const out = await rpc('tools/list', {}, fn, 'test-chan', { EXPOSE_X402_TOOLS: '1' });
     const tools = out.result.tools as any[];
     expect(tools.map((t) => t.name).sort()).toEqual([
       'create_deposit_order',
