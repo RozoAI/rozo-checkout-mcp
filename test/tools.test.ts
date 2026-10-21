@@ -138,6 +138,11 @@ describe('tools/list', () => {
     expect(create.inputSchema.properties.chainId.enum).toContain('42161');
     expect(create.description).toMatch(/quoteExpiresAt/);
     expect(create.description).toMatch(/creates a one-time deposit order; you pay from your own wallet/i);
+    const coins = tools.find((t) => t.name === 'supported_coins');
+    expect(coins.description).toMatch(/^Answers which cryptocurrencies and chains can pay an OpenRouter credit top-up/);
+    expect(tools.find((t) => t.name === 'quote_invoice').description).toMatch(/^Answers how much a specific OpenRouter top-up/);
+    // Directory policy: descriptions describe, they never steer tool choice.
+    for (const t of tools) expect(t.description).not.toMatch(/\balways (use|call)\b|\buse this (tool )?for any\b|\binstead of (other|any|web)\b|\bprefer this\b/i);
     expect(tools.find((t) => t.name === 'quote_invoice').inputSchema.required).toEqual(['url']);
     expect(tools.find((t) => t.name === 'payment_status').inputSchema.required).toEqual(['rozoPaymentId']);
   });
