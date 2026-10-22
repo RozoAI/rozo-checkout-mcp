@@ -16,7 +16,7 @@ ZEC on Zcash (Beta): use https://checkout.rozo.ai/zec, this server does not crea
 A native coin order is exact-out, like Lightning: the order states the exact coin amount to send
 (`deposit.amount`, also given as `deposit.amountBaseUnits` with `deposit.decimals`: 18 for ETH, BNB
 and POL, 9 for SOL), and that price is locked only until `quoteExpiresAt`. The coin amount includes an
-FX spread on top of the service fee. Native orders are limited to $2,000 per invoice, and native ETH on
+FX spread on top of the service fee. Native orders are limited to $3,500 per invoice, and native ETH on
 Ethereum needs at least $1. A native coin is offered for an invoice only when `quote_invoice` lists it
 in that invoice's `supportedSources`; `create_deposit_order` refuses it otherwise
 (`NATIVE_NOT_OFFERED`), above the cap (`NATIVE_OVER_LIMIT`) or below the minimum

@@ -357,7 +357,7 @@ describe('native coins and Arbitrum', () => {
     expect(rows.find((r) => r.chainId === '137').tokens).toEqual(['USDC', 'USDT']);
     expect(rows.find((r) => r.chainId === '137').native).toBeUndefined();
     expect(payload.nativeMinUsd).toEqual({ '1': { ETH: 1 } });
-    expect(payload.nativeMaxUsd).toBe(2000);
+    expect(payload.nativeMaxUsd).toBe(3500);
   });
 
   it('creates a native SOL order: exact amount, 9 decimals, expiresAt is the price lock', async () => {
@@ -395,8 +395,8 @@ describe('native coins and Arbitrum', () => {
     expect(calls.some((c) => c.url === `${MPP_BASE}/create-invoice`)).toBe(false);
   });
 
-  it('enforces the $2,000 cap and the per-chain minimum before creating anything', async () => {
-    const over = mockFetch({ quote: { supportedSources: ALL_NATIVE, callerPays: '2000.01', quote: { callerPays: '2000.01' } } });
+  it('enforces the $3,500 cap and the per-chain minimum before creating anything', async () => {
+    const over = mockFetch({ quote: { supportedSources: ALL_NATIVE, callerPays: '3500.01', quote: { callerPays: '3500.01' } } });
     const a = await rpc('tools/call', { name: 'create_deposit_order', arguments: { url: LINK, chainId: '1', tokenSymbol: 'ETH' } }, over.fn);
     expect(a.result.content[0].text).toContain('NATIVE_OVER_LIMIT');
     expect(over.calls.some((c) => c.url === `${MPP_BASE}/create-invoice`)).toBe(false);
@@ -413,6 +413,17 @@ describe('native coins and Arbitrum', () => {
     });
     const c = await rpc('tools/call', { name: 'create_deposit_order', arguments: { url: LINK, chainId: '8453', tokenSymbol: 'ETH' } }, base.fn);
     expect(c.result.isError).toBeFalsy();
+
+    // The cap itself and just under it are allowed (amount <= $3,500); $3,200 (the old cap + $0.01 path) too.
+    for (const usd of ['3200.01', '3499.99', '3500', '3500.00']) {
+      const at = mockFetch({
+        quote: { supportedSources: ALL_NATIVE, quote: { callerPays: usd } },
+        payment: nativePayment({ source: { chainId: '8453', tokenSymbol: 'ETH', receiverAddress: '0x1111111111111111111111111111111111111111', amount: '1.2' } }),
+      });
+      const r = await rpc('tools/call', { name: 'create_deposit_order', arguments: { url: LINK, chainId: '8453', tokenSymbol: 'ETH' } }, at.fn);
+      expect(r.result.content[0].text, usd).not.toContain('NATIVE_OVER_LIMIT');
+      expect(at.calls.some((c) => c.url === `${MPP_BASE}/create-invoice`), usd).toBe(true);
+    }
   });
 
   it('refuses a native order without a price lock or with one about to end, without leaking the address', async () => {
