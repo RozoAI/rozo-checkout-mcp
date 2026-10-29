@@ -131,7 +131,7 @@ const NATIVE_NOTE =
 const linkUrlSchema = z
   .string()
   .max(512)
-  .describe('Coinbase link: https://payments.coinbase.com/payment-links/pl_... or https://payments.coinbase.com/payment-sessions/paymentSession_...');
+  .describe('Payment link: https://payments.coinbase.com/payment-links/pl_... or https://payments.coinbase.com/payment-sessions/paymentSession_...');
 
 export function registerTools(server: McpServer, ctx: ToolContext): void {
   const now = ctx.now ?? (() => Date.now());
@@ -141,7 +141,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     {
       title: 'Supported coins',
       description:
-        'Answers which cryptocurrencies and chains can pay an OpenRouter credit top-up or another Coinbase payment link through Rozo Checkout, without a Coinbase account: ' +
+        'Answers which cryptocurrencies and chains can pay an OpenRouter credit top-up or another AI service invoice through Rozo Checkout: ' +
         'USDC and USDT on Ethereum, BNB Chain, Polygon, Arbitrum and Solana; USDC on Base and Stellar; native ETH (Ethereum, Base, Arbitrum), BNB, POL and SOL; BTC over Lightning. ' +
         'Returns each chain id, token symbol and token decimals. Static list, needs no payment link and makes no network call; quote_invoice reports which of these a specific invoice accepts. ' +
         NATIVE_NOTE,
@@ -154,13 +154,13 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
   server.registerTool(
     'quote_invoice',
     {
-      title: 'Quote a Coinbase invoice',
+      title: 'Quote an AI service invoice',
       description:
-        'Answers what a specific OpenRouter top-up or other Coinbase payment link charges, whether it can still be paid through Rozo Checkout, and which coins can pay it. ' +
-        'Takes the link URL and returns the merchant, invoice amount, callerPays (the USD amount the invoice charges), the link expiry, payability and supportedSources: the coins THIS invoice can be paid with. ' +
+        'Answers what a specific OpenRouter top-up or other AI service invoice charges, whether it can still be paid through Rozo Checkout, and which coins can pay it. ' +
+        'Takes the payment link URL and returns the merchant, invoice amount, callerPays (the USD amount the invoice charges), the link expiry, payability and supportedSources: the coins THIS invoice can be paid with. ' +
         'The exact amount to send in a given coin, including the service fee, bridge and network fees, or the FX spread on a native coin, comes from create_deposit_order. Offer a native coin (ETH, BNB, POL, SOL) only when it appears in supportedSources. Creates nothing and moves no funds.',
       inputSchema: { url: linkUrlSchema },
-      annotations: { title: 'Quote a Coinbase invoice', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      annotations: { title: 'Quote an AI service invoice', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     async ({ url }) => {
       try {
@@ -377,7 +377,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     'payment_status',
     {
       title: 'Payment status',
-      description: 'Check a Rozo order by rozoPaymentId: whether the deposit arrived, bridging/payout progress, and whether the Coinbase invoice settled. Read-only.',
+      description: 'Check a Rozo order by rozoPaymentId: whether the deposit arrived, bridging/payout progress, and whether the OpenRouter or other AI service invoice settled. Read-only.',
       inputSchema: { rozoPaymentId: z.string().max(64).describe('Order UUID returned by create_deposit_order.') },
       annotations: { title: 'Payment status', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
