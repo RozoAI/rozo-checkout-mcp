@@ -62,16 +62,65 @@ function parseTime(v: unknown): number | null {
   return null;
 }
 
+const USDC_DECIMALS = 6;
+
+/** A non-negative integer string of USDC atomic units (6 decimals), else null. */
+function atomicUsdc(v: unknown): string | null {
+  const s = typeof v === 'string' ? v.trim() : typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? String(v) : '';
+  if (!/^\d{1,30}$/.test(s)) return null;
+  return s.replace(/^0+(?=\d)/, '');
+}
+
+/** Exact decimal string for USDC atomic units, always 6 decimals ("10610000" -> "10.610000"). */
+export function formatAtomicUsdc(atomic: string): string {
+  const padded = atomic.padStart(USDC_DECIMALS + 1, '0');
+  return `${padded.slice(0, -USDC_DECIMALS)}.${padded.slice(-USDC_DECIMALS)}`;
+}
+
+/**
+ * One pricing amount from a quote-invoice response, as [atomic, decimal]. The
+ * atomic field (quote.<name>AtomicUsdc) wins; else the top-level decimal
+ * (<name>), converted exactly. Never the nested quote.callerPays: that is the
+ * upstream invoice face value before the Rozo service fee.
+ */
+function pricedAmount(quote: any, name: 'callerPays' | 'original' | 'serviceFee'): [string | null, string | null] {
+  let atomic = atomicUsdc(quote?.quote?.[`${name}AtomicUsdc`]);
+  if (atomic === null) {
+    const top = quote?.[name];
+    const dec = typeof top === 'number' && Number.isFinite(top) ? String(top) : typeof top === 'string' ? top : '';
+    const units = dec ? toBaseUnits(dec, USDC_DECIMALS) : null;
+    atomic = units === null ? null : atomicUsdc(units);
+  }
+  return [atomic, atomic === null ? null : formatAtomicUsdc(atomic)];
+}
+
+function feeBpsOf(quote: any): number | null {
+  const v = quote?.quote?.feeBps ?? quote?.feeBps;
+  const n = typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : v;
+  return typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= 10_000 ? n : null;
+}
+
 /** Whitelisted view of a quote-invoice response (mirrors the CLI's snapshotFromQuote). */
 export function quoteSnapshot(quote: any) {
   const cb = quote?.coinbasePayment || quote?.paymentLink || null;
+  const [callerPaysAtomicUsdc, callerPays] = pricedAmount(quote, 'callerPays');
+  const [, original] = pricedAmount(quote, 'original');
+  const [, serviceFee] = pricedAmount(quote, 'serviceFee');
   return {
     linkId: str(quote?.linkId ?? quote?.paymentId),
     protocolVersion: str(quote?.protocolVersion),
     merchant: str(quote?.merchant),
     invoiceAmount: str(quote?.invoice?.amount),
     fiat: str(quote?.invoice?.fiat),
-    callerPays: str(quote?.quote?.callerPays ?? quote?.callerPays),
+    // Total USD the payer is charged: invoice face value plus the Rozo service
+    // fee (before bridge/network fees or a native FX spread). null when the
+    // quote carries no fee-inclusive amount; the backend then stays the gate.
+    callerPays,
+    callerPaysAtomicUsdc,
+    // Invoice face value as priced by Rozo, the service fee, and its rate.
+    original,
+    serviceFee,
+    feeBps: feeBpsOf(quote),
     coinbase: cb
       ? {
           status: str(cb.status),
@@ -125,7 +174,7 @@ function nativeMinUsd(quote: any, chainId: string, symbol: string): number {
 const NATIVE_NOTE =
   'Native coins (ETH on Ethereum, Base, Arbitrum; BNB on BNB Chain; POL on Polygon; SOL on Solana) are exact-out like Lightning: ' +
   'the order states the exact coin amount, priced at the current rate plus an FX spread on top of the service fee, and that price holds only until quoteExpiresAt. ' +
-  `Native orders are capped at $${NATIVE_MAX_USD} per invoice (native ETH on Ethereum needs at least $1), and a native coin is offered only when quote_invoice lists it for that invoice. ` +
+  `Native orders are capped at $${NATIVE_MAX_USD} of callerPays (service fee included) per invoice (native ETH on Ethereum needs at least $1), and a native coin is offered only when quote_invoice lists it for that invoice. ` +
   'ZEC on Zcash (Beta) is not available through this server: send a payer holding ZEC to https://checkout.rozo.ai/zec.';
 
 const linkUrlSchema = z
@@ -157,8 +206,9 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
       title: 'Quote an AI service invoice',
       description:
         'Answers what a specific OpenRouter top-up or other AI service invoice charges, whether it can still be paid through Rozo Checkout, and which coins can pay it. ' +
-        'Takes the payment link URL and returns the merchant, invoice amount, callerPays (the USD amount the invoice charges), the link expiry, payability and supportedSources: the coins THIS invoice can be paid with. ' +
-        'The exact amount to send in a given coin, including the service fee, bridge and network fees, or the FX spread on a native coin, comes from create_deposit_order. Offer a native coin (ETH, BNB, POL, SOL) only when it appears in supportedSources. Creates nothing and moves no funds.',
+        'Takes the payment link URL and returns the merchant, invoice amount, callerPays (the total USD charged: invoice plus the Rozo service fee; also callerPaysAtomicUsdc in 6-decimal units), ' +
+        'the breakdown original (invoice face value), serviceFee and feeBps (fee rate in basis points, 100 = 1%), the link expiry, payability and supportedSources: the coins THIS invoice can be paid with. ' +
+        'The exact amount to send in a given coin, which adds bridge and network fees, or the FX spread on a native coin, on top of callerPays, comes from create_deposit_order. Offer a native coin (ETH, BNB, POL, SOL) only when it appears in supportedSources. Creates nothing and moves no funds.',
       inputSchema: { url: linkUrlSchema },
       annotations: { title: 'Quote an AI service invoice', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
@@ -240,14 +290,15 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
               supportedSources: offered,
             });
           }
+          // The USD limits apply to callerPays (fee included), as on the backend.
           // callerPays missing: the backend stays the gate for the USD limits.
           const usd = snap.callerPays === null ? NaN : Number(snap.callerPays);
           if (Number.isFinite(usd) && usd > NATIVE_MAX_USD) {
-            return fail('NATIVE_OVER_LIMIT', `Native orders are limited to $${NATIVE_MAX_USD} per invoice; this one is $${snap.callerPays}. Pay with USDC or USDT.`);
+            return fail('NATIVE_OVER_LIMIT', `Native orders are limited to $${NATIVE_MAX_USD} per invoice; this one is $${snap.callerPays} including the service fee. Pay with USDC or USDT.`);
           }
           const min = nativeMinUsd(quote, chainId, token);
           if (Number.isFinite(usd) && usd < min) {
-            return fail('NATIVE_UNDER_MINIMUM', `${token} on ${chainName(chainId)} needs at least $${min}; this invoice is $${snap.callerPays}. Pay with USDC or USDT.`);
+            return fail('NATIVE_UNDER_MINIMUM', `${token} on ${chainName(chainId)} needs at least $${min}; this invoice is $${snap.callerPays} including the service fee. Pay with USDC or USDT.`);
           }
         }
 

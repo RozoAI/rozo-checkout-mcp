@@ -34,7 +34,7 @@ export const SUPPORTED_SOURCES: readonly SourceRow[] = [
   { chainId: 'lightning', chain: 'Bitcoin Lightning', tokens: ['BTC'] },
 ];
 
-/** Upper bound on callerPays for a native order (amount <= cap is allowed). Mirrors the backend
+/** Upper bound on callerPays (service fee included) for a native order (amount <= cap is allowed). Mirrors the backend
  * MAX_NATIVE_PAYIN_USD and checkout.rozo.ai: $3,500 since 2026-10-23 (was $3,200 from 2026-10-20,
  * $2,000 before; this copy had stayed at $2,000). */
 export const NATIVE_MAX_USD = 3500;
