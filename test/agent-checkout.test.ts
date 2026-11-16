@@ -10,7 +10,7 @@ const LINK = 'https://payments.coinbase.com/payment-links/pl_01TEST';
 const SR_ID = '0f8fad5b-d9cb-469f-a165-70867728950e';
 const ON: Env = { EXPOSE_AGENT_CHECKOUT_TOOLS: '1' };
 
-type Call = { url: string; method: string; body: any; headers: Record<string, string> };
+type Call = { url: string; method: string; body: any; headers: Record<string, string>; redirect?: string };
 
 const agentView = (over: Record<string, unknown> = {}) => ({
   spendRequestId: SR_ID,
@@ -45,7 +45,7 @@ function mockFetch(handler: (c: Call) => { status: number; json: unknown }) {
   const calls: Call[] = [];
   const fn = async (url: string, init?: RequestInit) => {
     const headers = Object.fromEntries(Object.entries((init?.headers ?? {}) as Record<string, string>).map(([k, v]) => [k.toLowerCase(), v]));
-    const c: Call = { url, method: init?.method ?? 'GET', body: init?.body ? JSON.parse(String(init.body)) : null, headers };
+    const c: Call = { url, method: init?.method ?? 'GET', body: init?.body ? JSON.parse(String(init.body)) : null, headers, redirect: init?.redirect };
     calls.push(c);
     const { status, json } = handler(c);
     return new Response(JSON.stringify(json), { status, headers: { 'content-type': 'application/json' } });
@@ -276,6 +276,55 @@ describe('agent_checkout_request_status', () => {
       const m = mockFetch(() => ({ status, json }));
       const out = await call('agent_checkout_request_status', { spendRequestId: SR_ID }, m.fn);
       expect(out.payload.error.code).toBe(code);
+    }
+  });
+});
+
+describe('review fixes', () => {
+  it('refuses redirects on every credential-bearing call', async () => {
+    const { fn, calls } = mockFetch(() => ({ status: 200, json: { request: agentView() } }));
+    await call('agent_checkout_request_payment', { invoice: LINK, context: 'why' }, fn);
+    await call('agent_checkout_request_status', { spendRequestId: SR_ID }, fn);
+    expect(calls).toHaveLength(2);
+    for (const c of calls) {
+      expect(c.redirect).toBe('error');
+      expect(new URL(c.url).origin).toBe('https://apiserver.mpprouter.dev');
+    }
+    // A fetch that still hands back a 3xx is treated as an unknown outcome, never followed.
+    const r = mockFetch(() => ({ status: 302, json: {} }));
+    const out = await call('agent_checkout_request_status', { spendRequestId: SR_ID }, r.fn);
+    expect(out.payload.error.code).toBe('OUTCOME_UNKNOWN');
+    expect(r.calls).toHaveLength(1);
+  });
+
+  it('network failure or timeout is OUTCOME_UNKNOWN, never "nothing was paid"', async () => {
+    const boom = (async () => { throw new TypeError('network down'); }) as unknown as typeof fetch;
+    const create = await call('agent_checkout_request_payment', { invoice: LINK, context: 'why', idempotencyKey: 'net-key-01' }, boom);
+    expect(create.payload.error.code).toBe('OUTCOME_UNKNOWN');
+    expect(create.payload.error.message).toMatch(/may already exist/);
+    expect(create.payload.error.message).toMatch(/SAME idempotencyKey/);
+    expect(create.payload.idempotencyKey).toBe('net-key-01');
+    expect(create.text).not.toMatch(/Nothing was paid/i);
+    const st = await call('agent_checkout_request_status', { spendRequestId: SR_ID }, boom);
+    expect(st.payload.error.code).toBe('OUTCOME_UNKNOWN');
+    expect(st.payload.error.message).toMatch(/could not be read/);
+    expect(st.payload.error.message).toMatch(/Do not assume it is unpaid/);
+    expect(st.raw).not.toContain(CRED);
+  });
+
+  it('next-step hint follows the returned status on a replay', async () => {
+    for (const [status, re] of [
+      ['pending_approval', /owner must approve in Discord/],
+      ['approved', /owner approved/],
+      ['succeeded', /Do not create another request/],
+      ['denied', /owner declined/],
+      ['expired', /expired unpaid/],
+    ] as const) {
+      const { fn } = mockFetch(() => ({ status: 200, json: { replay: true, request: agentView({ status }) } }));
+      const out = await call('agent_checkout_request_payment', { invoice: LINK, context: 'why', idempotencyKey: 'replay-key-1' }, fn);
+      expect(out.payload.replay).toBe(true);
+      expect(out.payload.next).toMatch(re);
+      if (status !== 'pending_approval') expect(out.payload.next).not.toMatch(/must approve/);
     }
   });
 });

@@ -21,12 +21,14 @@
  */
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { UpstreamError, rawRequest, type FetchLike } from './api';
+import { UpstreamError, rawRequest, type FetchLike, type RawResponse } from './api';
 import { InputError, parseCoinbaseLink } from './ids';
 import { atomicUsdc, formatAtomicUsdc } from './tools';
 import { CLIENT_LABEL } from './version';
 
 export const AC_BASE = 'https://apiserver.mpprouter.dev/v1/agent-checkout';
+const AC_ORIGIN = 'https://apiserver.mpprouter.dev';
+const AC_PATH_PREFIX = '/v1/agent-checkout/';
 export const AC_CREDENTIAL_HEADER = 'x-rozo-agent-checkout-credential';
 
 const CREDENTIAL_RE = /^ac_(?:live|test)_[A-Za-z0-9_-]{43}$/;
@@ -186,10 +188,57 @@ function fromResponse(status: number, json: any, extra: Record<string, unknown> 
   return fail(code, message, more);
 }
 
-function fromThrown(err: unknown, extra: Record<string, unknown> = {}): ToolResult {
+const UNKNOWN_CREATE =
+  'The outcome is UNKNOWN: Agent Checkout could not be reached or did not answer in time. The spend request may already exist. ' +
+  'Retry agent_checkout_request_payment with the SAME idempotencyKey (and the same invoice and context); do not use a new key.';
+const UNKNOWN_STATUS =
+  'The state could not be read: Agent Checkout could not be reached or did not answer in time. Do not assume it is unpaid or unchanged; check again later.';
+
+function fromThrown(err: unknown, kind: 'create' | 'status', extra: Record<string, unknown> = {}): ToolResult {
   if (err instanceof InputError) return fail(err.code, err.message, extra);
-  if (err instanceof UpstreamError) return fail(err.code, `${clean(err.message)}. Nothing was paid; retry later.`, extra);
+  if (err instanceof UpstreamError) {
+    return fail('OUTCOME_UNKNOWN', kind === 'create' ? UNKNOWN_CREATE : UNKNOWN_STATUS, { ...extra, cause: clean(err.code, 64) });
+  }
   return fail('INTERNAL', 'Unexpected error.', extra);
+}
+
+/**
+ * Every call that carries the credential goes here: the URL must be on the
+ * pinned https origin and path, and redirects are refused (fetch would follow
+ * them and forward the Authorization header).
+ */
+async function acCall(fetchFn: FetchLike, method: 'GET' | 'POST', url: string, credential: string, body?: unknown, headers: Record<string, string> = {}): Promise<RawResponse> {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    throw new Error('agent checkout url invalid');
+  }
+  if (u.origin !== AC_ORIGIN || !u.pathname.startsWith(AC_PATH_PREFIX) || u.username || u.password) {
+    throw new Error('agent checkout url not on the pinned origin');
+  }
+  const res = await rawRequest(fetchFn, method, url, body, { ...authHeaders(credential), ...headers }, { redirect: 'error' });
+  // Defence in depth for fetch implementations that ignore redirect: 'error'.
+  if (res.status >= 300 && res.status < 400) throw new UpstreamError('HTTP_REDIRECT_REFUSED', 'redirect refused', res.status);
+  return res;
+}
+
+const NEXT_BY_STATUS: Record<string, string> = {
+  created: 'The quote is not ready yet. Retry agent_checkout_request_payment later with the SAME idempotencyKey, or check agent_checkout_request_status.',
+  pending_approval: 'Tell the user the owner must approve in Discord. Check progress with agent_checkout_request_status using spendRequestId.',
+  approved: 'The owner approved; payment is not made yet. Check progress with agent_checkout_request_status.',
+  awaiting_payment: 'The owner approved and must complete payment. Check progress with agent_checkout_request_status.',
+  paying: 'Payment is in progress. Check again with agent_checkout_request_status.',
+  succeeded: 'Payment went through. Merchant delivery is not verified by Rozo; check with the merchant. Do not create another request for this invoice.',
+  denied: 'The owner declined. Do not retry this request; ask the user before creating a new one.',
+  expired: 'The request expired unpaid. Create a new request with a NEW idempotencyKey only if the user still wants to pay.',
+  canceled: 'The request was canceled. Ask the user before creating a new one.',
+  failed: 'The payment failed. Ask the owner to check the request in Discord before trying again.',
+  manual_review: 'Under manual review by Rozo. Do not create a duplicate; check again later with agent_checkout_request_status.',
+};
+
+export function nextForStatus(status: unknown): string {
+  return NEXT_BY_STATUS[String(status)] ?? 'Check progress with agent_checkout_request_status; do not assume it was paid.';
 }
 
 export interface AgentCheckoutContext {
@@ -249,7 +298,7 @@ export function registerAgentCheckoutTools(server: McpServer, ctx: AgentCheckout
         const ctxText = context.trim();
         if (!ctxText) return fail('CONTEXT_REQUIRED', 'A context (why you want to pay) is required.', keyInfo);
         const body = { invoice: url, context: ctxText, entry: 'mcp', ...(fundingPreference ? { fundingPreference } : {}) };
-        const res = await rawRequest(ctx.fetchFn, 'POST', `${AC_BASE}/requests`, body, { ...authHeaders(gate), 'idempotency-key': key });
+        const res = await acCall(ctx.fetchFn, 'POST', `${AC_BASE}/requests`, gate, body, { 'idempotency-key': key });
         if (res.status === 404) return fail('AC_DISABLED', NOT_ENABLED, keyInfo);
         if (!res.ok) return fromResponse(res.status, res.json, keyInfo);
         if (!res.json || typeof res.json !== 'object' || !res.json.request) return fail('HTTP_BAD_JSON', 'Agent Checkout returned an unexpected body. Nothing was paid.', keyInfo);
@@ -265,10 +314,10 @@ export function registerAgentCheckoutTools(server: McpServer, ctx: AgentCheckout
                 quoteError: str(res.json.quoteError, 40) ?? 'QUOTE_UNAVAILABLE',
                 next: 'The price quote is temporarily unavailable. Retry agent_checkout_request_payment later with the SAME idempotencyKey and the same invoice and context.',
               }
-            : { next: 'Tell the user the owner must approve in Discord. Check progress with agent_checkout_request_status using spendRequestId.' }),
+            : { next: nextForStatus(summary.status) }),
         });
       } catch (err) {
-        return fromThrown(err, keyInfo);
+        return fromThrown(err, 'create', keyInfo);
       }
     },
   );
@@ -291,7 +340,7 @@ export function registerAgentCheckoutTools(server: McpServer, ctx: AgentCheckout
       const id = spendRequestId.trim();
       if (!UUID_RE.test(id)) return fail('BAD_VALUE', 'spendRequestId must be a UUID.');
       try {
-        const res = await rawRequest(ctx.fetchFn, 'GET', `${AC_BASE}/requests/${encodeURIComponent(id.toLowerCase())}`, undefined, authHeaders(gate));
+        const res = await acCall(ctx.fetchFn, 'GET', `${AC_BASE}/requests/${encodeURIComponent(id.toLowerCase())}`, gate);
         if (res.status === 404) {
           return fail('NOT_FOUND', 'No spend request with this id for this agent (or Agent Checkout is not enabled yet).', { httpStatus: 404 });
         }
@@ -299,7 +348,7 @@ export function registerAgentCheckoutTools(server: McpServer, ctx: AgentCheckout
         if (!res.json || typeof res.json !== 'object' || !res.json.request) return fail('HTTP_BAD_JSON', 'Agent Checkout returned an unexpected body.');
         return render(summarizeRequest(res.json.request));
       } catch (err) {
-        return fromThrown(err);
+        return fromThrown(err, 'status');
       }
     },
   );

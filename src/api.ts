@@ -48,6 +48,7 @@ export async function rawRequest(
   url: string,
   body?: unknown,
   headers: Record<string, string> = {},
+  opts: { redirect?: 'follow' | 'error' | 'manual' } = {},
 ): Promise<RawResponse> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -64,6 +65,7 @@ export async function rawRequest(
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
       signal: controller.signal,
+      ...(opts.redirect ? { redirect: opts.redirect } : {}),
     });
     // The timer also covers reading the body: a stalled body must not hang the tool call.
     text = await res.text();
