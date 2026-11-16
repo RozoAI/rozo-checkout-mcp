@@ -271,7 +271,7 @@ describe('agent_checkout_request_status', () => {
     for (const [status, json, code] of [
       [404, { error: { code: 'NOT_FOUND' } }, 'NOT_FOUND'],
       [401, { error: { code: 'UNAUTHORIZED' } }, 'AC_UNAUTHORIZED'],
-      [503, { error: { code: 'AC_NOT_CONFIGURED' } }, 'AC_DISABLED'],
+      [503, { error: { code: 'AC_NOT_CONFIGURED' } }, 'OUTCOME_UNKNOWN'],
     ] as const) {
       const m = mockFetch(() => ({ status, json }));
       const out = await call('agent_checkout_request_status', { spendRequestId: SR_ID }, m.fn);
@@ -380,6 +380,21 @@ describe('review round 2: unconfirmed answers are OUTCOME_UNKNOWN', () => {
       const { fn } = mockFetch(() => ({ status, json }));
       const out = await call('agent_checkout_request_payment', { invoice: LINK, context: 'why', idempotencyKey: 'def-key-01' }, fn);
       expect(out.payload.error.code).toBe(code);
+    }
+  });
+});
+
+describe('review round 3', () => {
+  it('status with 503 AC_DISABLED / AC_NOT_CONFIGURED is OUTCOME_UNKNOWN, never "nothing was paid"', async () => {
+    for (const c of ['AC_DISABLED', 'AC_NOT_CONFIGURED']) {
+      const { fn } = mockFetch(() => ({ status: 503, json: { error: { code: c } } }));
+      const out = await call('agent_checkout_request_status', { spendRequestId: SR_ID }, fn);
+      expect(out.payload.error.code).toBe('OUTCOME_UNKNOWN');
+      expect(out.payload.error.message).toMatch(/Do not assume it is unpaid/);
+      expect(out.text).not.toMatch(/Nothing was (paid|created)/i);
+      const create = await call('agent_checkout_request_payment', { invoice: LINK, context: 'why', idempotencyKey: 'dis-key-01' }, fn);
+      expect(create.payload.error.code).toBe('AC_DISABLED');
+      expect(create.payload.error.message).toMatch(/not enabled yet/);
     }
   });
 });

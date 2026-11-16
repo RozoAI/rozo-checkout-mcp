@@ -186,7 +186,11 @@ const UNKNOWN_STATUS =
 function fromResponse(kind: 'create' | 'status', status: number, json: any, extra: Record<string, unknown> = {}): ToolResult {
   const code = errorCode(json, status);
   if (status === 401) return fail('AC_UNAUTHORIZED', UNAUTHORIZED, extra);
-  if (status === 503 && (code === 'AC_DISABLED' || code === 'AC_NOT_CONFIGURED')) return fail('AC_DISABLED', NOT_ENABLED, extra);
+  if (status === 503 && (code === 'AC_DISABLED' || code === 'AC_NOT_CONFIGURED')) {
+    // Only create can say nothing was created; a status read cannot know the prior payment state.
+    if (kind === 'create') return fail('AC_DISABLED', NOT_ENABLED, extra);
+    return unknown('status', { ...extra, httpStatus: status, cause: code });
+  }
   const more: Record<string, unknown> = { ...extra, httpStatus: status };
   const known = kind === 'create' && CREATE_ERRORS[code] !== undefined && (status < 500 || RETRYABLE_503.has(code));
   if (!known) return unknown(kind, { ...more, cause: code });
