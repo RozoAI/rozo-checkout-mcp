@@ -3,12 +3,13 @@ import { srcFromRequestUrl } from './attribution';
 import { buildServer } from './server';
 import { clientForwardFrom } from './client-ip';
 import { agentKeyFromRequest } from './x402';
+import { acCredentialFromRequest } from './agent-checkout';
 import { SERVER_NAME, VERSION } from './version';
 
 const CORS = {
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET, POST, OPTIONS',
-  'access-control-allow-headers': 'content-type, accept, authorization, mcp-session-id, mcp-protocol-version, last-event-id',
+  'access-control-allow-headers': 'content-type, accept, authorization, mcp-session-id, mcp-protocol-version, last-event-id, x-rozo-agent-checkout-credential',
   'access-control-expose-headers': 'mcp-session-id, mcp-protocol-version',
 };
 
@@ -29,23 +30,40 @@ export interface Env {
    *  lists only the checkout and Stellar wallet tools, which create orders the user pays from their own
    *  wallet. Kept off by default for directory submissions (founder decision 2026-10-21). */
   EXPOSE_X402_TOOLS?: string;
+  /** "1" / "true" registers the two Agent Checkout tools (agent_checkout_request_payment,
+   *  agent_checkout_request_status). Unset = hidden. The backend switch is separate (mpprouter). */
+  EXPOSE_AGENT_CHECKOUT_TOOLS?: string;
+}
+
+function flagOn(v: string | undefined): boolean {
+  const s = (v ?? '').trim().toLowerCase();
+  return s === '1' || s === 'true';
 }
 
 export function x402ToolsEnabled(env: Env): boolean {
-  const v = (env.EXPOSE_X402_TOOLS ?? '').trim().toLowerCase();
-  return v === '1' || v === 'true';
+  return flagOn(env.EXPOSE_X402_TOOLS);
+}
+
+export function agentCheckoutToolsEnabled(env: Env): boolean {
+  return flagOn(env.EXPOSE_AGENT_CHECKOUT_TOOLS);
 }
 
 export async function handleMcp(request: Request, fetchFn: typeof fetch = fetch, env: Env = {}): Promise<Response> {
   // Stateless: a fresh server + transport per request, no session ids.
   // The optional x402 agent key travels as "Authorization: Bearer ak_..." on the
   // MCP request. It is forwarded to Rozo's x402 API only and never stored.
+  // The Agent Checkout credential travels as "Authorization: Bearer ac_..." or
+  // "X-Rozo-Agent-Checkout-Credential"; it is forwarded to mpprouter's
+  // /v1/agent-checkout API only, never stored, logged or echoed.
+  const agentCheckout = agentCheckoutToolsEnabled(env);
   const server = buildServer({
     fetchFn: (u, i) => fetchFn(u, i),
     src: srcFromRequestUrl(request.url),
     agentKey: agentKeyFromRequest(request),
     forward: clientForwardFrom(request, env.ROZO_PROXY_SECRET),
     x402: x402ToolsEnabled(env),
+    agentCheckout,
+    acCredential: agentCheckout ? acCredentialFromRequest(request) : { state: 'missing' },
   });
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
