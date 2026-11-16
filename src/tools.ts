@@ -65,7 +65,7 @@ function parseTime(v: unknown): number | null {
 const USDC_DECIMALS = 6;
 
 /** A non-negative integer string of USDC atomic units (6 decimals), else null. */
-function atomicUsdc(v: unknown): string | null {
+export function atomicUsdc(v: unknown): string | null {
   const s = typeof v === 'string' ? v.trim() : typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? String(v) : '';
   if (!/^\d{1,30}$/.test(s)) return null;
   return s.replace(/^0+(?=\d)/, '');
