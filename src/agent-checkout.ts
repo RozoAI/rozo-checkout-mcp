@@ -88,21 +88,23 @@ export const NOT_BOUND =
   'Never paste the credential into the chat or a tool argument.';
 const MALFORMED =
   'The Agent Checkout credential configured on this MCP connection is malformed. Ask the user to check the connector configuration (it starts with ac_live_ or ac_test_). Never paste it into the chat.';
-export const NOT_ENABLED = 'Agent Checkout is not enabled yet. Nothing was created and nothing was paid.';
+export const NOT_ENABLED =
+  'Agent Checkout is not enabled yet. This call did not create or pay anything; whether an earlier request with this idempotencyKey exists is unknown. ' +
+  'Keep the same idempotencyKey for any retry and do not start a new request.';
 const UNAUTHORIZED =
   'The Agent Checkout credential is not valid or not yet confirmed. Ask the user to confirm the binding in Discord, or to bind this agent again and update the connector configuration.';
 const NOTHING_PAID = 'This call paid nothing. Nothing is paid until the owner approves this request in Discord.';
 
 const STATUS_SENTENCES: Record<string, string> = {
-  created: 'Request recorded; the price quote is not ready yet. Nothing has been paid.',
-  pending_approval: 'Waiting for the owner to approve in Discord. Nothing has been paid.',
+  created: 'Request recorded; the price quote is not ready yet. Rozo reports no payment for it.',
+  pending_approval: 'Waiting for the owner to approve in Discord. Rozo reports no payment for it.',
   approved: 'The owner approved. Payment has not been made yet.',
-  awaiting_payment: 'Approved and waiting for the owner to complete payment. Nothing has been paid yet.',
+  awaiting_payment: 'Approved and waiting for the owner to complete payment. Rozo reports no payment for it yet.',
   paying: 'Payment is in progress.',
   succeeded: 'Payment to the merchant went through. Rozo does not verify merchant delivery; check with the merchant (for example the OpenRouter credit balance).',
-  denied: 'The owner declined this request. Nothing was paid.',
-  expired: 'The request expired before it was approved or paid. Nothing was paid. Create a new request if still needed.',
-  canceled: 'The request was canceled. Nothing was paid.',
+  denied: 'The owner declined this request. Rozo reports no payment for it.',
+  expired: 'The request expired before it was approved or paid. Rozo reports no payment for it. Create a new request if still needed.',
+  canceled: 'The request was canceled. Rozo reports no payment for it.',
   failed: 'The payment failed. Ask the owner to check the request in Discord before trying again.',
   manual_review: 'The request is under manual review by Rozo. Do not create a duplicate; check again later.',
 };
@@ -187,7 +189,7 @@ function fromResponse(kind: 'create' | 'status', status: number, json: any, extr
   const code = errorCode(json, status);
   if (status === 401) return fail('AC_UNAUTHORIZED', UNAUTHORIZED, extra);
   if (status === 503 && (code === 'AC_DISABLED' || code === 'AC_NOT_CONFIGURED')) {
-    // Only create can say nothing was created; a status read cannot know the prior payment state.
+    // A status read cannot know the prior payment state when the service is off.
     if (kind === 'create') return fail('AC_DISABLED', NOT_ENABLED, extra);
     return unknown('status', { ...extra, httpStatus: status, cause: code });
   }
@@ -246,7 +248,7 @@ const NEXT_BY_STATUS: Record<string, string> = {
   paying: 'Payment is in progress. Check again with agent_checkout_request_status.',
   succeeded: 'Payment went through. Merchant delivery is not verified by Rozo; check with the merchant. Do not create another request for this invoice.',
   denied: 'The owner declined. Do not retry this request; ask the user before creating a new one.',
-  expired: 'The request expired unpaid. Create a new request with a NEW idempotencyKey only if the user still wants to pay.',
+  expired: 'Rozo reports the request expired without payment. Create a new request with a NEW idempotencyKey only if the user still wants to pay.',
   canceled: 'The request was canceled. Ask the user before creating a new one.',
   failed: 'The payment failed. Ask the owner to check the request in Discord before trying again.',
   manual_review: 'Under manual review by Rozo. Do not create a duplicate; check again later with agent_checkout_request_status.',

@@ -318,7 +318,7 @@ describe('review fixes', () => {
       ['approved', /owner approved/],
       ['succeeded', /Do not create another request/],
       ['denied', /owner declined/],
-      ['expired', /expired unpaid/],
+      ['expired', /expired without payment/],
     ] as const) {
       const { fn } = mockFetch(() => ({ status: 200, json: { replay: true, request: agentView({ status }) } }));
       const out = await call('agent_checkout_request_payment', { invoice: LINK, context: 'why', idempotencyKey: 'replay-key-1' }, fn);
@@ -396,5 +396,35 @@ describe('review round 3', () => {
       expect(create.payload.error.code).toBe('AC_DISABLED');
       expect(create.payload.error.message).toMatch(/not enabled yet/);
     }
+  });
+});
+
+describe('review round 4', () => {
+  it('create 404 / 503 disabled never assert nothing was created or paid, and keep the key', async () => {
+    for (const [status, json] of [
+      [404, { error: { code: 'NOT_FOUND' } }],
+      [503, { error: { code: 'AC_DISABLED' } }],
+      [503, { error: { code: 'AC_NOT_CONFIGURED' } }],
+    ] as const) {
+      const { fn } = mockFetch(() => ({ status, json }));
+      const out = await call('agent_checkout_request_payment', { invoice: LINK, context: 'why', idempotencyKey: 'keep-key-01' }, fn);
+      expect(out.payload.error.code).toBe('AC_DISABLED');
+      expect(out.payload.error.message).toMatch(/This call did not create or pay anything/);
+      expect(out.payload.error.message).toMatch(/earlier request with this idempotencyKey exists is unknown/);
+      expect(out.payload.error.message).toMatch(/same idempotencyKey/);
+      expect(out.payload.idempotencyKey).toBe('keep-key-01');
+      expect(out.text).not.toMatch(/Nothing was (created|paid)/i);
+    }
+  });
+
+  it('no tool text asserts "nothing was paid" or delivery', async () => {
+    const src = await import('../src/agent-checkout');
+    for (const st of ['created', 'pending_approval', 'approved', 'awaiting_payment', 'paying', 'succeeded', 'denied', 'expired', 'canceled', 'failed', 'manual_review', 'weird']) {
+      for (const t of [src.statusSentence(st), src.nextForStatus(st)]) {
+        expect(t).not.toMatch(/nothing (was|has been) paid/i);
+        expect(t).not.toMatch(/\bwas delivered\b|\bhas been delivered\b/i);
+      }
+    }
+    expect(src.NOT_ENABLED).not.toMatch(/nothing was/i);
   });
 });
