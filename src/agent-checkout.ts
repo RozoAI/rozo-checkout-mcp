@@ -172,32 +172,43 @@ const CREATE_ERRORS: Record<string, string> = {
   RETRY_LATER: 'Agent Checkout is temporarily unavailable. Retry later with the same idempotencyKey.',
 };
 
-/** Map a non-2xx Agent Checkout response to a tool error. */
-function fromResponse(status: number, json: any, extra: Record<string, unknown> = {}): ToolResult {
+const UNKNOWN_CREATE =
+  'The outcome is UNKNOWN: Agent Checkout could not be reached or gave an answer that could not be confirmed. The spend request may already exist. ' +
+  'Retry agent_checkout_request_payment with the SAME idempotencyKey (and the same invoice and context); do not use a new key.';
+const UNKNOWN_STATUS =
+  'The state could not be read: Agent Checkout could not be reached or gave an answer that could not be confirmed. Do not assume it is unpaid or unchanged; check again later.';
+
+/**
+ * Map a non-2xx Agent Checkout response to a tool error. Only definite,
+ * documented refusals get a specific message; anything else (5xx, unknown
+ * codes) is OUTCOME_UNKNOWN, because the request may have been recorded.
+ */
+function fromResponse(kind: 'create' | 'status', status: number, json: any, extra: Record<string, unknown> = {}): ToolResult {
   const code = errorCode(json, status);
   if (status === 401) return fail('AC_UNAUTHORIZED', UNAUTHORIZED, extra);
   if (status === 503 && (code === 'AC_DISABLED' || code === 'AC_NOT_CONFIGURED')) return fail('AC_DISABLED', NOT_ENABLED, extra);
-  const message = CREATE_ERRORS[code] ?? `Agent Checkout answered HTTP ${status}. Nothing was paid.`;
   const more: Record<string, unknown> = { ...extra, httpStatus: status };
+  const known = kind === 'create' && CREATE_ERRORS[code] !== undefined && (status < 500 || RETRYABLE_503.has(code));
+  if (!known) return unknown(kind, { ...more, cause: code });
   if (code === 'INVOICE_IN_PROGRESS') {
     const id = str(json?.spendRequestId ?? json?.error?.spendRequestId, 64);
     const ref = str(json?.displayRef ?? json?.error?.displayRef, 64);
     if (id) more.spendRequestId = id;
     if (ref) more.displayRef = ref;
   }
-  return fail(code, message, more);
+  return fail(code, CREATE_ERRORS[code]!, more);
 }
 
-const UNKNOWN_CREATE =
-  'The outcome is UNKNOWN: Agent Checkout could not be reached or did not answer in time. The spend request may already exist. ' +
-  'Retry agent_checkout_request_payment with the SAME idempotencyKey (and the same invoice and context); do not use a new key.';
-const UNKNOWN_STATUS =
-  'The state could not be read: Agent Checkout could not be reached or did not answer in time. Do not assume it is unpaid or unchanged; check again later.';
+const RETRYABLE_503 = new Set(['AC_UNAVAILABLE', 'RETRY_LATER']);
+
+function unknown(kind: 'create' | 'status', extra: Record<string, unknown>): ToolResult {
+  return fail('OUTCOME_UNKNOWN', kind === 'create' ? UNKNOWN_CREATE : UNKNOWN_STATUS, extra);
+}
 
 function fromThrown(err: unknown, kind: 'create' | 'status', extra: Record<string, unknown> = {}): ToolResult {
   if (err instanceof InputError) return fail(err.code, err.message, extra);
   if (err instanceof UpstreamError) {
-    return fail('OUTCOME_UNKNOWN', kind === 'create' ? UNKNOWN_CREATE : UNKNOWN_STATUS, { ...extra, cause: clean(err.code, 64) });
+    return unknown(kind, { ...extra, cause: clean(err.code, 64) });
   }
   return fail('INTERNAL', 'Unexpected error.', extra);
 }
@@ -300,8 +311,8 @@ export function registerAgentCheckoutTools(server: McpServer, ctx: AgentCheckout
         const body = { invoice: url, context: ctxText, entry: 'mcp', ...(fundingPreference ? { fundingPreference } : {}) };
         const res = await acCall(ctx.fetchFn, 'POST', `${AC_BASE}/requests`, gate, body, { 'idempotency-key': key });
         if (res.status === 404) return fail('AC_DISABLED', NOT_ENABLED, keyInfo);
-        if (!res.ok) return fromResponse(res.status, res.json, keyInfo);
-        if (!res.json || typeof res.json !== 'object' || !res.json.request) return fail('HTTP_BAD_JSON', 'Agent Checkout returned an unexpected body. Nothing was paid.', keyInfo);
+        if (!res.ok) return fromResponse('create', res.status, res.json, keyInfo);
+        if (!res.json || typeof res.json !== 'object' || !res.json.request) return unknown('create', { ...keyInfo, httpStatus: res.status, cause: 'HTTP_BAD_JSON' });
         const summary = summarizeRequest(res.json.request);
         const pending = res.status === 202;
         return render({
@@ -344,8 +355,8 @@ export function registerAgentCheckoutTools(server: McpServer, ctx: AgentCheckout
         if (res.status === 404) {
           return fail('NOT_FOUND', 'No spend request with this id for this agent (or Agent Checkout is not enabled yet).', { httpStatus: 404 });
         }
-        if (!res.ok) return fromResponse(res.status, res.json);
-        if (!res.json || typeof res.json !== 'object' || !res.json.request) return fail('HTTP_BAD_JSON', 'Agent Checkout returned an unexpected body.');
+        if (!res.ok) return fromResponse('status', res.status, res.json);
+        if (!res.json || typeof res.json !== 'object' || !res.json.request) return unknown('status', { httpStatus: res.status, cause: 'HTTP_BAD_JSON' });
         return render(summarizeRequest(res.json.request));
       } catch (err) {
         return fromThrown(err, 'status');

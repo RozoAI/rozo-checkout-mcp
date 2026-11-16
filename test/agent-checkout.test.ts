@@ -229,7 +229,7 @@ describe('agent_checkout_request_payment', () => {
       [503, { error: { code: 'RETRY_LATER' } }, 'RETRY_LATER', /same idempotencyKey/],
       [409, { error: { code: 'IDEMPOTENCY_CONFLICT' } }, 'IDEMPOTENCY_CONFLICT', /different request/],
       [429, { error: { code: 'RATE_LIMITED' } }, 'RATE_LIMITED', /retry later/],
-      [500, { error: { code: `LEAK ${CRED}` } }, 'HTTP_500', /HTTP 500/],
+      [500, { error: { code: `LEAK ${CRED}` } }, 'OUTCOME_UNKNOWN', /SAME idempotencyKey/],
     ];
     for (const [status, json, code, msg] of cases) {
       const { fn } = mockFetch(() => ({ status, json }));
@@ -325,6 +325,61 @@ describe('review fixes', () => {
       expect(out.payload.replay).toBe(true);
       expect(out.payload.next).toMatch(re);
       if (status !== 'pending_approval') expect(out.payload.next).not.toMatch(/must approve/);
+    }
+  });
+});
+
+describe('review round 2: unconfirmed answers are OUTCOME_UNKNOWN', () => {
+  it('create: 5xx, unknown codes and unparseable 2xx never claim unpaid', async () => {
+    const cases: [number, unknown][] = [
+      [500, { error: { code: 'INTERNAL' } }],
+      [502, null],
+      [503, { error: { code: 'SOMETHING_NEW' } }],
+      [400, { error: { code: 'BRAND_NEW_CODE' } }],
+      [500, { error: { code: 'INVOICE_UNSUPPORTED' } }],
+      [201, { replay: false }],
+      [200, 'not an object'],
+    ];
+    for (const [status, json] of cases) {
+      const { fn } = mockFetch(() => ({ status, json }));
+      const out = await call('agent_checkout_request_payment', { invoice: LINK, context: 'why', idempotencyKey: 'unk-key-01' }, fn);
+      expect(out.isError).toBe(true);
+      expect(out.payload.error.code).toBe('OUTCOME_UNKNOWN');
+      expect(out.payload.error.message).toMatch(/may already exist/);
+      expect(out.payload.error.message).toMatch(/SAME idempotencyKey/);
+      expect(out.payload.idempotencyKey).toBe('unk-key-01');
+      expect(out.text).not.toMatch(/Nothing was (paid|created)/i);
+    }
+  });
+
+  it('status: 5xx, 4xx other than 401/404, and unparseable 200 say the state could not be read', async () => {
+    const cases: [number, unknown][] = [
+      [500, { error: { code: 'INTERNAL' } }],
+      [502, null],
+      [429, { error: { code: 'RATE_LIMITED' } }],
+      [400, { error: { code: 'INVALID_INPUT' } }],
+      [200, { nope: true }],
+    ];
+    for (const [status, json] of cases) {
+      const { fn } = mockFetch(() => ({ status, json }));
+      const out = await call('agent_checkout_request_status', { spendRequestId: SR_ID }, fn);
+      expect(out.payload.error.code).toBe('OUTCOME_UNKNOWN');
+      expect(out.payload.error.message).toMatch(/could not be read/);
+      expect(out.payload.error.message).toMatch(/Do not assume it is unpaid/);
+      expect(out.text).not.toMatch(/Nothing was paid/i);
+    }
+  });
+
+  it('definite refusals keep their specific message', async () => {
+    for (const [status, json, code] of [
+      [400, { error: { code: 'INVOICE_UNSUPPORTED' } }, 'INVOICE_UNSUPPORTED'],
+      [401, { error: { code: 'UNAUTHORIZED' } }, 'AC_UNAUTHORIZED'],
+      [409, { error: { code: 'IDEMPOTENCY_CONFLICT' } }, 'IDEMPOTENCY_CONFLICT'],
+      [503, { error: { code: 'AC_DISABLED' } }, 'AC_DISABLED'],
+    ] as const) {
+      const { fn } = mockFetch(() => ({ status, json }));
+      const out = await call('agent_checkout_request_payment', { invoice: LINK, context: 'why', idempotencyKey: 'def-key-01' }, fn);
+      expect(out.payload.error.code).toBe(code);
     }
   });
 });
