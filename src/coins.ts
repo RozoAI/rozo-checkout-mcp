@@ -21,6 +21,14 @@ export interface SourceRow {
   tokens: readonly string[];
   native?: string;
   decimals?: Readonly<Record<string, number>>;
+  /** Public Beta label (TRON). */
+  beta?: boolean;
+  /** Set when the order goes through a dedicated route instead of create-invoice. */
+  route?: 'tron_ton_alpha';
+  /** tron_ton_alpha only: the router's network key. */
+  network?: 'tron' | 'ton';
+  /** tron_ton_alpha only: the published fee wording; the exact fee comes with the order. */
+  fee?: string;
 }
 
 export const SUPPORTED_SOURCES: readonly SourceRow[] = [
@@ -33,6 +41,36 @@ export const SUPPORTED_SOURCES: readonly SourceRow[] = [
   { chainId: '1500', chain: 'Stellar', tokens: ['USDC'], decimals: { USDC: 7 } },
   { chainId: 'lightning', chain: 'Bitcoin Lightning', tokens: ['BTC'] },
 ];
+
+/**
+ * TRON and TON, served by the MPP Router tron-ton-alpha routes (the backend of
+ * checkout.rozo.ai/tron and /ton), not by create-invoice. Chain ids match the
+ * router's ALPHA_OPTIONS. Fixed exact amount per order, one shared deadline,
+ * no price lock beyond it. Fee wording mirrors checkout.rozo.ai ("TRON Beta
+ * charges 1% with a $0.30 minimum; TON charges 1% only"). TRON is public as
+ * Beta; TON carries no Beta label on checkout.rozo.ai.
+ */
+export const ALPHA_SOURCES: readonly SourceRow[] = [
+  { chainId: '728126428', chain: 'TRON', tokens: ['USDT', 'TRX'], decimals: { USDT: 6, TRX: 6 }, beta: true, route: 'tron_ton_alpha', network: 'tron', fee: '1% with a $0.30 minimum' },
+  { chainId: '1600', chain: 'TON', tokens: ['USDT'], decimals: { USDT: 6 }, beta: false, route: 'tron_ton_alpha', network: 'ton', fee: '1%' },
+];
+
+/** Every source create_deposit_order accepts: the standard table plus TRON and TON. */
+export const ALL_SOURCES: readonly SourceRow[] = [...SUPPORTED_SOURCES, ...ALPHA_SOURCES];
+
+/**
+ * Coins checkout.rozo.ai serves on its own pages that this server cannot
+ * create orders for. Send a payer holding one of these to the page.
+ */
+export const WEB_ONLY_ROUTES: readonly { name: string; chain: string; tokens: readonly string[]; url: string }[] = [
+  { name: 'ZEC on Zcash', chain: 'Zcash', tokens: ['ZEC'], url: 'https://checkout.rozo.ai/zec' },
+  { name: 'USDC on Arc', chain: 'Arc', tokens: ['USDC'], url: 'https://checkout.rozo.ai/arc' },
+];
+
+/** The tron-ton-alpha row for chainId, if any. */
+export function alphaRow(chainId: string): SourceRow | undefined {
+  return ALPHA_SOURCES.find((s) => s.chainId === chainId);
+}
 
 /** Upper bound on callerPays (service fee included) for a native order (amount <= cap is allowed). Mirrors the backend
  * MAX_NATIVE_PAYIN_USD and checkout.rozo.ai: $3,500 since 2026-10-23 (was $3,200 from 2026-10-20,
@@ -53,10 +91,10 @@ export const NATIVE_MIN_USD_FALLBACK: Readonly<Record<string, number>> = {
   '900': 1,
 };
 
-export const CHAIN_IDS = SUPPORTED_SOURCES.map((s) => s.chainId) as unknown as [string, ...string[]];
+export const CHAIN_IDS = ALL_SOURCES.map((s) => s.chainId) as unknown as [string, ...string[]];
 
 function row(chainId: string): SourceRow | undefined {
-  return SUPPORTED_SOURCES.find((s) => s.chainId === chainId);
+  return ALL_SOURCES.find((s) => s.chainId === chainId);
 }
 
 export function isSupportedSource(chainId: string, tokenSymbol: string): boolean {

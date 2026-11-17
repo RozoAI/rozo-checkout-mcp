@@ -5,6 +5,7 @@
  *   create  POST  {MPP}/create-invoice         keyless (IP rate-gated)
  *   status  GET   {MPP}/invoice-status         keyless
  *   deposit GET   {INTENTS}/payments/<uuid>    keyless, read-only
+ *   tron/ton GET  {MPP}/tron-ton-alpha/capability, POST {MPP}/tron-ton-alpha/option   keyless
  *
  * No credential is ever attached: there is nowhere in this client to put one.
  * The checkout tools never write to payment-api; their order creation goes
@@ -114,6 +115,18 @@ export function makeApi(fetchFn: FetchLike) {
     invoiceStatus(rozoPaymentId: string) {
       const qs = new URLSearchParams({ rozo_payment_id: rozoPaymentId });
       return request(fetchFn, 'GET', `${MPP_BASE}/invoice-status?${qs.toString()}`);
+    },
+    /** Status by Coinbase link id (pl_* / paymentSession_*): how TRON / TON orders are tracked. */
+    invoiceStatusByLink(linkId: string) {
+      const qs = new URLSearchParams({ payment_id: linkId });
+      return rawRequest(fetchFn, 'GET', `${MPP_BASE}/invoice-status?${qs.toString()}`);
+    },
+    alphaCapability() {
+      return rawRequest(fetchFn, 'GET', `${MPP_BASE}/tron-ton-alpha/capability`);
+    },
+    /** Same body as checkout.rozo.ai/tron and /ton: { url, network, token }. Any HTTP status is returned. */
+    alphaOption(args: { url: string; network: 'tron' | 'ton'; token: string }) {
+      return rawRequest(fetchFn, 'POST', `${MPP_BASE}/tron-ton-alpha/option`, { url: args.url, network: args.network, token: args.token });
     },
     getPayment(rozoPaymentId: string) {
       return request(fetchFn, 'GET', `${INTENTS_BASE}/payments/${encodeURIComponent(rozoPaymentId)}`);

@@ -158,7 +158,9 @@ describe('tools/list', () => {
     // Directory policy: descriptions describe, they never steer tool choice.
     for (const t of tools) expect(t.description).not.toMatch(/\balways (use|call)\b|\buse this (tool )?for any\b|\binstead of (other|any|web)\b|\bprefer this\b/i);
     expect(tools.find((t) => t.name === 'quote_invoice').inputSchema.required).toEqual(['url']);
-    expect(tools.find((t) => t.name === 'payment_status').inputSchema.required).toEqual(['rozoPaymentId']);
+    // rozoPaymentId or url (TRON / TON orders have no rozoPaymentId): neither is required by the schema.
+    expect(tools.find((t) => t.name === 'payment_status').inputSchema.required ?? []).toEqual([]);
+    expect(Object.keys(tools.find((t) => t.name === 'payment_status').inputSchema.properties).sort()).toEqual(['rozoPaymentId', 'url']);
   });
 });
 
@@ -345,11 +347,13 @@ describe('native coins and Arbitrum', () => {
     for (const [id, sym] of [['1', 'ETH'], ['8453', 'ETH'], ['42161', 'ETH'], ['56', 'BNB'], ['137', 'POL']] as const) expect(by(id).decimals[sym]).toBe(18);
     expect(by('56').decimals.USDC).toBe(18);
     expect(by('1500').tokens).toEqual(['USDC']);
-    // The only Beta mention is the ZEC pointer to its own page; nothing else
-    // (POL included) is labelled Beta.
+    // Beta is the ZEC pointer to its own page and TRON; nothing else (POL
+    // and TON included) is labelled Beta.
     const zecNote = 'ZEC on Zcash (Beta) is not available through this server: send a payer holding ZEC to https://checkout.rozo.ai/zec.';
     expect(text).toContain(zecNote);
-    expect(text.replace(zecNote, '').toLowerCase()).not.toContain('beta');
+    expect(rows.filter((r) => r.beta === true).map((r) => r.chainId)).toEqual(['728126428']);
+    const stripped = text.replace(zecNote, '').replace(/TRON \(Beta\)|TRON Beta|"beta": (true|false)/g, '');
+    expect(stripped.toLowerCase()).not.toContain('beta');
     expect(rows.some((r) => r.tokens.includes('ZEC'))).toBe(false);
   });
 

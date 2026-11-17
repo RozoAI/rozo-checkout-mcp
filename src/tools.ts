@@ -2,11 +2,16 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { UpstreamError, type Api } from './api';
 import { isBlacklisted } from './blacklist';
+import { alphaFailure, alphaOptionFromBody, alphaStatusPhase, canonicalLinkId, capabilityPairs, ALPHA_DECIMALS, type AlphaNetwork } from './alpha';
 import {
+  ALL_SOURCES,
+  ALPHA_SOURCES,
   CHAIN_IDS,
+  WEB_ONLY_ROUTES,
+  alphaRow,
+  type SourceRow,
   NATIVE_MAX_USD,
   NATIVE_MIN_USD_FALLBACK,
-  SUPPORTED_SOURCES,
   chainName,
   isNativeSource,
   isSupportedSource,
@@ -14,7 +19,7 @@ import {
   toBaseUnits,
   tokenDecimals,
 } from './coins';
-import { InputError, assertRozoPaymentId, parseCoinbaseLink } from './ids';
+import { InputError, assertRozoPaymentId, parseCoinbaseLink, type ParsedLink } from './ids';
 import { SUPPORT, normalizeContactEmail } from './support';
 
 /** Minimum time left on both the Rozo order and the Coinbase link before we hand out a deposit. */
@@ -177,6 +182,199 @@ const NATIVE_NOTE =
   `Native orders are capped at $${NATIVE_MAX_USD} of callerPays (service fee included) per invoice (native ETH on Ethereum needs at least $1), and a native coin is offered only when quote_invoice lists it for that invoice. ` +
   'ZEC on Zcash (Beta) is not available through this server: send a payer holding ZEC to https://checkout.rozo.ai/zec.';
 
+const TRON_TON_NOTE =
+  'USDT and TRX on TRON (Beta) and USDT on TON go through a dedicated route (route "tron_ton_alpha", the same backend as checkout.rozo.ai/tron and /ton): ' +
+  'create_deposit_order returns one exact amount, a receiving address and, on TON when required, a six digit comment, valid until expiresAt. ' +
+  'TRON Beta charges 1% with a $0.30 minimum; TON charges 1%; the exact fees come with the order. These orders have no rozoPaymentId: check them with payment_status and the payment link url. ' +
+  'Availability can change; quote_invoice reports whether TRON and TON are open for a given invoice.';
+
+const WEB_ONLY_NOTE = 'webOnlyRoutes lists coins checkout.rozo.ai accepts on its own pages that this server cannot create orders for: send a payer holding one of them to that page.';
+
+/** Fetch the alpha capability, retrying once: the router answers from a short per-instance cache. */
+async function readAlphaCapability(api: Api): Promise<{ checked: boolean; pairs: { network: AlphaNetwork; token: string }[] }> {
+  let checked = false;
+  for (let i = 0; i < 2; i++) {
+    try {
+      const r = await api.alphaCapability();
+      if (r.ok && r.json && typeof r.json === 'object') {
+        checked = true;
+        const pairs = capabilityPairs(r.json);
+        if (pairs.length) return { checked, pairs };
+      }
+    } catch {
+      // network failure: retry once, then report unchecked
+    }
+  }
+  return { checked, pairs: [] };
+}
+
+/** Alpha rows narrowed to what the capability enables; rows with no token left are dropped. */
+function enabledAlphaRows(pairs: { network: AlphaNetwork; token: string }[]): SourceRow[] {
+  return ALPHA_SOURCES.map((r) => ({ ...r, tokens: r.tokens.filter((t) => pairs.some((p) => p.network === r.network && p.token === t)) })).filter((r) => r.tokens.length > 0);
+}
+
+const UPSTREAM_CODE_RE = /^[A-Z0-9_]{1,64}$/;
+
+/**
+ * TRON / TON order through the tron-ton-alpha route. Every value shown comes
+ * from the router and passes alphaOptionFromBody; anything else is refused.
+ */
+async function createAlphaOrder(api: Api, now: () => number, link: ParsedLink, r: SourceRow, token: string, emailGiven: boolean): Promise<ToolResult> {
+  const net = r.network as AlphaNetwork;
+  const base = { linkId: link.linkId, route: 'tron_ton_alpha', support: SUPPORT };
+
+  // 1. Never hand out instructions for a link whose payment is already seen
+  // (the web page reads status first too). A failed read is not a stop: a
+  // fresh link has no status yet, and the router re-checks the link itself.
+  try {
+    const st = await api.invoiceStatusByLink(link.linkId);
+    if (st.ok) {
+      const phase = alphaStatusPhase(st.json, link.linkId);
+      if (phase === 'settled' || phase === 'paid') {
+        return fail('ORDER_ALREADY_FUNDED', 'A payment for this link has already been received. Do NOT pay again; check payment_status with this url.', { ...base, phase });
+      }
+      if (phase === 'review') {
+        return fail('ORDER_NEEDS_REVIEW', 'A payment for this link is under review. Do NOT pay again; contact ROZO support.', { ...base, phase });
+      }
+    }
+  } catch {
+    // unreachable status: continue, the option route is the gate
+  }
+
+  // 2. Create or re-read the order (idempotent per link and coin on the router).
+  const res = await api.alphaOption({ url: link.url, network: net, token });
+  const opt = res.status === 200 ? alphaOptionFromBody(res.json, net, token) : null;
+  if (!opt) {
+    const raw = res.status === 200 ? 'MALFORMED' : typeof res.json?.code === 'string' ? res.json.code : `HTTP_${res.status}`;
+    const upstreamCode = UPSTREAM_CODE_RE.test(raw) ? raw : 'UNKNOWN';
+    const f = alphaFailure(upstreamCode);
+    return fail(f.code, f.message, { ...base, upstreamCode, httpStatus: res.status, doNotPay: f.doNotPay });
+  }
+  if (opt.linkId !== null && canonicalLinkId(opt.linkId) !== canonicalLinkId(link.linkId)) {
+    return fail('DEPOSIT_INCOMPLETE', 'The router answered for a different payment link. Do NOT send anything.', base);
+  }
+  if (opt.orderState === 'paid') {
+    return fail('ORDER_ALREADY_FUNDED', 'This TRON / TON order is already paid. Do NOT pay again; check payment_status with this url.', base);
+  }
+  if (opt.orderState !== 'open') {
+    return fail('ORDER_NEEDS_REVIEW', `This TRON / TON order is "${opt.orderState.slice(0, 32)}", not open. Do NOT pay; contact ROZO support.`, base);
+  }
+  if (isBlacklisted(opt.address) || isBlacklisted(opt.jetton)) {
+    return fail('BLACKLIST_HIT', 'The receiving address matches a known compromised address. Do NOT send anything.', base);
+  }
+
+  // 3. Time left, on our clock and on the router's (the deadline is shared by
+  // every coin of this link and never renewed).
+  const t = now();
+  let remaining = opt.expiresAtMs - t;
+  if (opt.serverTimeMs !== null) remaining = Math.min(remaining, opt.expiresAtMs - opt.serverTimeMs);
+  if (opt.expired || remaining <= 0) {
+    const f = alphaFailure('ALPHA_ORDER_EXPIRED');
+    return fail(f.code, f.message, { ...base, doNotPay: true });
+  }
+  if (opt.linkExpiresAtMs !== null && opt.linkExpiresAtMs < opt.expiresAtMs) {
+    const f = alphaFailure('LINK_EXPIRES_TOO_SOON');
+    return fail(f.code, f.message, base);
+  }
+  if (remaining < MIN_REMAINING_MS) {
+    return fail('NOT_ENOUGH_TIME', 'Less than 10 minutes remain on this TRON / TON order and its deadline is never extended. Do not fund it; pay with another coin or ask for a fresh link.', {
+      ...base,
+      expiresAt: new Date(opt.expiresAtMs).toISOString(),
+    });
+  }
+
+  const expiresAt = new Date(opt.expiresAtMs).toISOString();
+  const memo = opt.memo || null;
+  const f = opt.fees;
+  const instructions = [
+    `Send EXACTLY ${opt.amount} ${token} (${opt.atomic} base units, ${ALPHA_DECIMALS} decimals) on ${r.chain} to deposit.payTo, from your own wallet, before ${expiresAt}. ` +
+      'This exact amount identifies the order: do not round it, split it or add to it. If you send from an exchange, make sure its withdrawal fee is not taken out of this amount.',
+    net === 'tron'
+      ? `TRON uses the address only: no memo. ${token === 'USDT' ? 'Send TRC20 USDT on TRON, not USDT on another network.' : 'Send native TRX.'}`
+      : memo
+        ? `Put the comment (memo) ${memo} on the transfer exactly as given. Without it the payment cannot be matched. Send USDT (jetton master deposit.tokenContract), not TON coin.`
+        : 'This TON address belongs to this order only; no comment is needed. Send USDT (jetton master deposit.tokenContract), not TON coin.',
+    'Send one payment only. Never reuse this address, amount or comment for another payment, never send after expiresAt, and do not also pay this link with another coin.',
+    f.totalUsd
+      ? `Fees: total ${f.totalUsd} USD (invoice ${f.invoiceUsd ?? '?'}, service fee ${f.serviceFeeUsd ?? '?'}, network fee ${f.networkFeeUsd ?? '?'}).`
+      : `Fees: ${r.fee ?? 'see the order'} on top of the invoice; the order amount already includes them.`,
+    `Then poll payment_status with { "url": "${link.url}" } (TRON / TON orders have no rozoPaymentId).`,
+    `If anything goes wrong, contact ROZO: ${SUPPORT.email}, X ${SUPPORT.x}, Discord ${SUPPORT.discord}.`,
+  ];
+
+  return ok({
+    ...base,
+    reused: opt.reused,
+    merchant: str(res.json?.merchant),
+    deposit: {
+      chainId: r.chainId,
+      chain: r.chain,
+      network: net,
+      beta: r.beta === true,
+      tokenSymbol: token,
+      payTo: opt.address,
+      receiverAddress: opt.address,
+      memo,
+      memoType: memo ? 'text' : null,
+      memoRequired: Boolean(memo),
+      ...(net === 'ton' ? { addressPerOrder: opt.perOrder, tokenContract: opt.jetton } : {}),
+      amount: opt.amount,
+      amountUnit: token,
+      decimals: ALPHA_DECIMALS,
+      amountBaseUnits: opt.atomic,
+      native: token === 'TRX',
+      exactOut: true,
+    },
+    fees: f,
+    expiresAt,
+    contactEmailProvided: false,
+    ...(emailGiven ? { contactEmailNote: 'The TRON / TON route does not take a contact email; it was not sent.' } : {}),
+    statusCheck: { tool: 'payment_status', arguments: { url: link.url } },
+    instructions,
+  });
+}
+
+/** payment_status for a TRON / TON (or any) order tracked by its Coinbase link. */
+async function statusByLink(api: Api, link: ParsedLink): Promise<ToolResult> {
+  const st = await api.invoiceStatusByLink(link.linkId);
+  if (st.status === 404) {
+    return ok({
+      linkId: link.linkId,
+      phase: 'not_found',
+      guidance: 'No order or payment is recorded for this link yet. If you just paid, poll again in about 30 seconds; do not pay again.',
+      support: SUPPORT,
+    });
+  }
+  if (!st.ok || !st.json || typeof st.json !== 'object' || st.json.ok !== true) {
+    return fail(`HTTP_${st.status}`, 'Payment status is unavailable right now. Do not pay again; retry in a minute.', { linkId: link.linkId });
+  }
+  const d = st.json;
+  const phase = alphaStatusPhase(d, link.linkId);
+  if (typeof d.pl_id !== 'string' || canonicalLinkId(d.pl_id) !== canonicalLinkId(link.linkId)) {
+    return fail('STATUS_MISMATCH', 'The status answer is for a different link. Do not pay again; retry in a minute.', { linkId: link.linkId });
+  }
+  const rp = typeof d.rozo_payment_id === 'string' && /^[0-9a-f-]{36}$/i.test(d.rozo_payment_id) ? d.rozo_payment_id.toLowerCase() : null;
+  return ok({
+    linkId: link.linkId,
+    rozoPaymentId: rp,
+    phase: phase || 'pending',
+    settled: phase === 'settled',
+    payinConfirmed: d.payin?.confirmed === true,
+    coinbaseSettled: d.coinbase ? d.coinbase.settled === true : null,
+    coinbaseStatus: str(d.coinbase?.status),
+    routerState: str(d.routerState?.status),
+    support: SUPPORT,
+    guidance:
+      phase === 'settled'
+        ? 'Done: the Coinbase invoice is settled.'
+        : phase === 'review'
+          ? 'The payment needs manual review. Do NOT pay again; contact ROZO support.'
+          : phase === 'paid'
+            ? 'Payment received; settling the invoice. Do NOT pay again; poll again in about 30 seconds.'
+            : 'No confirmed payment yet. If you already sent it, wait and poll again in about 30 seconds; do not pay again.',
+  });
+}
+
 const linkUrlSchema = z
   .string()
   .max(512)
@@ -191,13 +389,16 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
       title: 'Supported coins',
       description:
         'Answers which cryptocurrencies and chains can pay an OpenRouter credit top-up or another AI service invoice through Rozo Checkout: ' +
-        'USDC and USDT on Ethereum, BNB Chain, Polygon, Arbitrum and Solana; USDC on Base and Stellar; native ETH (Ethereum, Base, Arbitrum), BNB, POL and SOL; BTC over Lightning. ' +
-        'Returns each chain id, token symbol and token decimals. Static list, needs no payment link and makes no network call; quote_invoice reports which of these a specific invoice accepts. ' +
-        NATIVE_NOTE,
+        'USDC and USDT on Ethereum, BNB Chain, Polygon, Arbitrum and Solana; USDC on Base and Stellar; native ETH (Ethereum, Base, Arbitrum), BNB, POL and SOL; BTC over Lightning; USDT and TRX on TRON (Beta), USDT on TON. ' +
+        'Returns each chain id, token symbol and token decimals (TRON and TON rows carry route "tron_ton_alpha", a beta flag and their fee wording), plus webOnlyRoutes: coins served only on checkout.rozo.ai pages. ' +
+        'Static list, needs no payment link and makes no network call; quote_invoice reports which of these a specific invoice accepts. ' +
+        NATIVE_NOTE +
+        ' ' +
+        TRON_TON_NOTE,
       inputSchema: {},
       annotations: { title: 'Supported coins', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async () => ok({ supportedSources: SUPPORTED_SOURCES, native: NATIVE_NOTE }),
+    async () => ok({ supportedSources: ALL_SOURCES, webOnlyRoutes: WEB_ONLY_ROUTES, native: NATIVE_NOTE, tronTon: TRON_TON_NOTE, webOnly: WEB_ONLY_NOTE }),
   );
 
   server.registerTool(
@@ -215,16 +416,27 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     async ({ url }) => {
       try {
         const link = parseCoinbaseLink(url);
+        const capP = readAlphaCapability(ctx.api);
         const quote = await ctx.api.quoteInvoice(link.url);
         const snap = quoteSnapshot(quote);
         const p = derivePayable(snap, now());
+        const offered: SourceRow[] = offeredSources(quote?.supportedSources);
+        const cap = await capP;
+        const alphaRows = enabledAlphaRows(cap.pairs).filter((r) => !offered.some((o) => o.chainId === r.chainId));
+        const tronTon = cap.pairs.length
+          ? `Open for this invoice: ${alphaRows.map((r) => `${r.tokens.join(' and ')} on ${r.chain}${r.beta ? ' (Beta)' : ''}`).join('; ')}. ` +
+            'create_deposit_order returns the exact amount and fees; the router can still refuse (capacity, limit, link expiry).'
+          : cap.checked
+            ? 'TRON and TON are not available right now; retry quote_invoice later or pay with another coin.'
+            : 'TRON and TON availability could not be checked; they are omitted. Retry quote_invoice later.';
         return ok({
           payable: p.payable,
           ...(p.payable ? {} : { notPayable: { code: p.code, reason: p.reason } }),
           ...snap,
           linkId: snap.linkId ?? link.linkId,
           linkKind: link.kind,
-          supportedSources: offeredSources(quote?.supportedSources),
+          supportedSources: [...offered, ...alphaRows],
+          tronTon,
           nativeMinUsd: quote?.nativeMinUsd && typeof quote.nativeMinUsd === 'object' ? quote.nativeMinUsd : null,
           nativeMaxUsd: NATIVE_MAX_USD,
           next: p.payable ? 'Call create_deposit_order with this url and the coin you hold.' : null,
@@ -242,17 +454,22 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
       description:
         'Creates a one-time deposit order; you pay from your own wallet. Returns the deposit address (or Lightning invoice), the exact amount to send (also in base units with the token decimals), any required memo, the expiry and the rozoPaymentId. This server holds no keys and sends nothing. Send exactly the amount, on exactly that chain and token, before expiresAt. An unfunded order simply expires at no cost. ' +
         'For a native coin the result also carries quoteExpiresAt (the end of the price lock, which expiresAt equals): send the exact coin amount before it. ' +
-        NATIVE_NOTE,
+        'For TRON or TON the result carries the receiving address, the exact amount, the TON comment when one is required, the fees and expiresAt, and no rozoPaymentId: track it with payment_status and the url. ' +
+        NATIVE_NOTE +
+        ' ' +
+        TRON_TON_NOTE,
       inputSchema: {
         url: linkUrlSchema,
         chainId: z
           .enum(CHAIN_IDS)
-          .describe('Source chain id from supported_coins: "1" Ethereum, "56" BNB Chain, "137" Polygon, "42161" Arbitrum, "900" Solana, "8453" Base, "1500" Stellar, "lightning".'),
+          .describe(
+            'Source chain id from supported_coins: "1" Ethereum, "56" BNB Chain, "137" Polygon, "42161" Arbitrum, "900" Solana, "8453" Base, "1500" Stellar, "lightning", "728126428" TRON (Beta), "1600" TON.',
+          ),
         tokenSymbol: z
           .string()
           .min(2)
           .max(8)
-          .describe('Token you will pay with: USDC, USDT, BTC (Lightning), or the chain native coin ETH (1, 8453, 42161), BNB (56), POL (137), SOL (900).'),
+          .describe('Token you will pay with: USDC, USDT, BTC (Lightning), the chain native coin ETH (1, 8453, 42161), BNB (56), POL (137), SOL (900), or USDT / TRX on TRON, USDT on TON.'),
         email: z
           .string()
           .max(320)
@@ -271,9 +488,13 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
         }
         const token = tokenSymbol.trim().toUpperCase();
         if (!isSupportedSource(chainId, token)) {
-          return fail('UNSUPPORTED_SOURCE', `${token} on ${chainName(chainId) ?? chainId} is not supported.`, { supportedSources: SUPPORTED_SOURCES });
+          return fail('UNSUPPORTED_SOURCE', `${token} on ${chainName(chainId) ?? chainId} is not supported.`, { supportedSources: ALL_SOURCES });
         }
         const link = parseCoinbaseLink(url);
+
+        // TRON / TON: dedicated route, its own checks.
+        const alpha = alphaRow(chainId);
+        if (alpha) return await createAlphaOrder(ctx.api, now, link, alpha, token, Boolean(email));
 
         // 1. fresh quote + payability (same checks as the CLI)
         const quote = await ctx.api.quoteInvoice(link.url);
@@ -428,12 +649,19 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     'payment_status',
     {
       title: 'Payment status',
-      description: 'Check a Rozo order by rozoPaymentId: whether the deposit arrived, bridging/payout progress, and whether the OpenRouter or other AI service invoice settled. Read-only.',
-      inputSchema: { rozoPaymentId: z.string().max(64).describe('Order UUID returned by create_deposit_order.') },
+      description:
+        'Check a Rozo order: whether the deposit arrived, bridging/payout progress, and whether the OpenRouter or other AI service invoice settled. ' +
+        'Pass rozoPaymentId for orders that have one, or url (the payment link) for TRON / TON orders, which have none. Read-only.',
+      inputSchema: {
+        rozoPaymentId: z.string().max(64).optional().describe('Order UUID returned by create_deposit_order.'),
+        url: linkUrlSchema.optional().describe('Payment link of a TRON / TON order (use instead of rozoPaymentId).'),
+      },
       annotations: { title: 'Payment status', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
-    async ({ rozoPaymentId }) => {
+    async ({ rozoPaymentId, url }) => {
       try {
+        if (url !== undefined && rozoPaymentId !== undefined) return fail('INVALID_INPUT', 'Pass either rozoPaymentId or url, not both.');
+        if (url !== undefined) return await statusByLink(ctx.api, parseCoinbaseLink(url));
         const id = assertRozoPaymentId(rozoPaymentId);
         const payment = await ctx.api.getPayment(id);
         let router: any = null;
