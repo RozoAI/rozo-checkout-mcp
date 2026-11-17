@@ -347,14 +347,15 @@ describe('native coins and Arbitrum', () => {
     for (const [id, sym] of [['1', 'ETH'], ['8453', 'ETH'], ['42161', 'ETH'], ['56', 'BNB'], ['137', 'POL']] as const) expect(by(id).decimals[sym]).toBe(18);
     expect(by('56').decimals.USDC).toBe(18);
     expect(by('1500').tokens).toEqual(['USDC']);
-    // Beta is the ZEC pointer to its own page and TRON; nothing else (POL
-    // and TON included) is labelled Beta.
-    const zecNote = 'ZEC on Zcash (Beta) is not available through this server: send a payer holding ZEC to https://checkout.rozo.ai/zec.';
+    // Only TRON is labelled Beta; transparent ZEC is production (founder
+    // 2026-11-17), and POL and TON carry no Beta label either.
+    const zecNote = 'ZEC on Zcash is not available through this server: send a payer holding ZEC to https://checkout.rozo.ai/zec.';
     expect(text).toContain(zecNote);
     expect(rows.filter((r) => r.beta === true).map((r) => r.chainId)).toEqual(['728126428']);
     const stripped = text.replace(zecNote, '').replace(/TRON \(Beta\)|TRON Beta|"beta": (true|false)/g, '');
     expect(stripped.toLowerCase()).not.toContain('beta');
     expect(rows.some((r) => r.tokens.includes('ZEC'))).toBe(false);
+    expect(text).not.toMatch(/ZEC[^.]{0,20}\(Beta\)/);
   });
 
   it('quote_invoice offers a native coin only when the invoice lists it', async () => {
