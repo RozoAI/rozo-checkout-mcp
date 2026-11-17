@@ -1,6 +1,6 @@
 {
   "name": "rozo-checkout-mcp",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "description": "Pay OpenRouter and Coinbase payment links with USDC, USDT, ETH, BNB, POL, SOL or BTC Lightning. Non-custodial remote MCP server (Cloudflare Worker).",
   "type": "module",
