@@ -5,7 +5,7 @@
  * NATIVE_SOURCE_DEFS (ETH@1, ETH@8453, ETH@42161, BNB@56, POL@137, SOL@900),
  * which production payment-api lists in GET /payments/supported. Lightning is
  * carried locally because it lives outside the server's own SUPPORTED_SOURCE
- * payload. Beta-only native coins (ZEC) are deliberately not listed.
+ * payload. Web-only native coins (ZEC, paid on checkout.rozo.ai/zec) are deliberately not listed.
  *
  * `native` names the chain's native coin. A native order is exact-out like
  * Lightning: the order's source.amount is the exact coin amount, and its price
@@ -62,8 +62,8 @@ export const ALL_SOURCES: readonly SourceRow[] = [...SUPPORTED_SOURCES, ...ALPHA
  * Coins checkout.rozo.ai serves on its own pages that this server cannot
  * create orders for. Send a payer holding one of these to the page.
  */
-export const WEB_ONLY_ROUTES: readonly { name: string; chain: string; tokens: readonly string[]; url: string }[] = [
-  { name: 'ZEC on Zcash', chain: 'Zcash', tokens: ['ZEC'], url: 'https://checkout.rozo.ai/zec' },
+export const WEB_ONLY_ROUTES: readonly { name: string; chain: string; tokens: readonly string[]; url: string; beta?: boolean }[] = [
+  { name: 'ZEC on Zcash', chain: 'Zcash', tokens: ['ZEC'], url: 'https://checkout.rozo.ai/zec', beta: false },
   { name: 'USDC on Arc', chain: 'Arc', tokens: ['USDC'], url: 'https://checkout.rozo.ai/arc' },
 ];
 
