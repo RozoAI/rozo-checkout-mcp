@@ -12,6 +12,8 @@ import {
   type SourceRow,
   NATIVE_MAX_USD,
   NATIVE_MIN_USD_FALLBACK,
+  POL_MAX_USD,
+  nativeMaxUsdFor,
   chainName,
   isNativeSource,
   isSupportedSource,
@@ -179,7 +181,7 @@ function nativeMinUsd(quote: any, chainId: string, symbol: string): number {
 const NATIVE_NOTE =
   'Native coins (ETH on Ethereum, Base, Arbitrum; BNB on BNB Chain; POL on Polygon; SOL on Solana) are exact-out like Lightning: ' +
   'the order states the exact coin amount, priced at the current rate plus an FX spread on top of the service fee, and that price holds only until quoteExpiresAt. ' +
-  `Native orders are capped at $${NATIVE_MAX_USD} of callerPays (service fee included) per invoice (native ETH on Ethereum needs at least $1), and a native coin is offered only when quote_invoice lists it for that invoice. ` +
+  `Native ETH, BNB and SOL orders are capped at $${NATIVE_MAX_USD} of callerPays (service fee included) per invoice, which covers up to 12,000 OpenRouter credits; POL is capped at $${POL_MAX_USD} (native ETH on Ethereum needs at least $1), and a native coin is offered only when quote_invoice lists it for that invoice. ` +
   'ZEC on Zcash is not available through this server: send a payer holding ZEC to https://checkout.rozo.ai/zec.';
 
 const TRON_TON_NOTE =
@@ -439,6 +441,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
           tronTon,
           nativeMinUsd: quote?.nativeMinUsd && typeof quote.nativeMinUsd === 'object' ? quote.nativeMinUsd : null,
           nativeMaxUsd: NATIVE_MAX_USD,
+          nativeMaxUsdPol: POL_MAX_USD,
           next: p.payable ? 'Call create_deposit_order with this url and the coin you hold.' : null,
         });
       } catch (err) {
@@ -514,8 +517,9 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
           // The USD limits apply to callerPays (fee included), as on the backend.
           // callerPays missing: the backend stays the gate for the USD limits.
           const usd = snap.callerPays === null ? NaN : Number(snap.callerPays);
-          if (Number.isFinite(usd) && usd > NATIVE_MAX_USD) {
-            return fail('NATIVE_OVER_LIMIT', `Native orders are limited to $${NATIVE_MAX_USD} per invoice; this one is $${snap.callerPays} including the service fee. Pay with USDC or USDT.`);
+          const max = nativeMaxUsdFor(token);
+          if (Number.isFinite(usd) && usd > max) {
+            return fail('NATIVE_OVER_LIMIT', `${token} orders are limited to $${max} per invoice; this one is $${snap.callerPays} including the service fee. Pay with USDC or USDT.`);
           }
           const min = nativeMinUsd(quote, chainId, token);
           if (Number.isFinite(usd) && usd < min) {
