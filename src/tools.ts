@@ -181,7 +181,7 @@ function nativeMinUsd(quote: any, chainId: string, symbol: string): number {
 const NATIVE_NOTE =
   'Native coins (ETH on Ethereum, Base, Arbitrum; BNB on BNB Chain; POL on Polygon; SOL on Solana) are exact-out like Lightning: ' +
   'the order states the exact coin amount, priced at the current rate plus an FX spread on top of the service fee, and that price holds only until quoteExpiresAt. ' +
-  `Native ETH, BNB and SOL orders are capped at $${NATIVE_MAX_USD} of callerPays (service fee included) per invoice, which covers up to 12,000 OpenRouter credits; POL is capped at $${POL_MAX_USD} (native ETH on Ethereum needs at least $1), and a native coin is offered only when quote_invoice lists it for that invoice. ` +
+  `Native ETH, BNB and SOL take OpenRouter invoices of up to 10,000 credits (about $10,500; refused only above $${NATIVE_MAX_USD} of callerPays, service fee included, so a 10,000-credit invoice always fits). POL is capped at $${POL_MAX_USD} (native ETH on Ethereum needs at least $1), and a native coin is offered only when quote_invoice lists it for that invoice. ` +
   'ZEC on Zcash is not available through this server: send a payer holding ZEC to https://checkout.rozo.ai/zec.';
 
 const TRON_TON_NOTE =
@@ -519,7 +519,8 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
           const usd = snap.callerPays === null ? NaN : Number(snap.callerPays);
           const max = nativeMaxUsdFor(token);
           if (Number.isFinite(usd) && usd > max) {
-            return fail('NATIVE_OVER_LIMIT', `${token} orders are limited to $${max} per invoice; this one is $${snap.callerPays} including the service fee. Pay with USDC or USDT.`);
+            const promise = max === POL_MAX_USD ? `POL takes invoices up to $${POL_MAX_USD}` : 'ETH, BNB and SOL take OpenRouter invoices of up to 10,000 credits';
+            return fail('NATIVE_OVER_LIMIT', `This invoice is too large for ${token} ($${snap.callerPays} including the service fee); ${promise}. Pay with USDC or USDT.`);
           }
           const min = nativeMinUsd(quote, chainId, token);
           if (Number.isFinite(usd) && usd < min) {

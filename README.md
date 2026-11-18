@@ -36,8 +36,8 @@ error codes map to `ROUTE_UNAVAILABLE`, `ROUTE_AT_CAPACITY`, `PRICE_UNAVAILABLE`
 A native coin order is exact-out, like Lightning: the order states the exact coin amount to send
 (`deposit.amount`, also given as `deposit.amountBaseUnits` with `deposit.decimals`: 18 for ETH, BNB
 and POL, 9 for SOL), and that price is locked only until `quoteExpiresAt`. The coin amount includes an
-FX spread on top of the service fee. Native ETH, BNB and SOL orders are limited to $12,750 per invoice
-including the service fee (up to 12,000 OpenRouter credits), POL orders to $3,500, and native ETH on
+FX spread on top of the service fee. Native ETH, BNB and SOL take OpenRouter invoices of up to 10,000
+credits (about $10,500), POL orders up to $3,500, and native ETH on
 Ethereum needs at least $1. A native coin is offered for an invoice only when `quote_invoice` lists it
 in that invoice's `supportedSources`; `create_deposit_order` refuses it otherwise
 (`NATIVE_NOT_OFFERED`), above the cap (`NATIVE_OVER_LIMIT`) or below the minimum
