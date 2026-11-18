@@ -74,7 +74,9 @@ export function alphaRow(chainId: string): SourceRow | undefined {
 
 /** Upper bound on callerPays (service fee included) for a native ETH, BNB or SOL order (amount <= cap is allowed).
  * Mirrors the customer cap on checkout.rozo.ai, MPP Router and the intents app_config knob
- * NATIVE_MAX_ORDER_USD_merchant_openrouter: $12,750, i.e. up to 12,000 OpenRouter credits (backend hard cap $13,500).
+ * NATIVE_MAX_ORDER_USD_merchant_openrouter: $12,750 (backend hard cap $13,500). Payers are promised only up to
+ * 10,000 OpenRouter credits ($10,605 with the fee; founder 2026-11-18 "10000 credits for all"), so the room above
+ * that is a margin that keeps a 10,000-credit order from being refused, not an offer.
  * History: $3,500 from 2026-10-23, $3,200 from 2026-10-20, $2,000 before. */
 export const NATIVE_MAX_USD = 12750;
 

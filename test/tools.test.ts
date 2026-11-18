@@ -151,6 +151,9 @@ describe('tools/list', () => {
     expect(create.inputSchema.properties.chainId.enum).toContain('lightning');
     expect(create.inputSchema.properties.chainId.enum).toContain('42161');
     expect(create.description).toMatch(/quoteExpiresAt/);
+    // Founder 2026-11-18: the promise is up to 10,000 OpenRouter credits for ETH, BNB and SOL.
+    expect(create.description).toMatch(/up to 10,000 credits/);
+    expect(create.description).not.toMatch(/12,000/);
     expect(create.description).toMatch(/creates a one-time deposit order; you pay from your own wallet/i);
     const coins = tools.find((t) => t.name === 'supported_coins');
     expect(coins.description).toMatch(/^Answers which cryptocurrencies and chains can pay an OpenRouter credit top-up/);
@@ -419,6 +422,9 @@ describe('native coins and Arbitrum', () => {
     const over = mockFetch({ quote: { supportedSources: ALL_NATIVE, callerPays: '12750.01', quote: { callerPays: '12623.77' } } });
     const a = await rpc('tools/call', { name: 'create_deposit_order', arguments: { url: LINK, chainId: '1', tokenSymbol: 'ETH' } }, over.fn);
     expect(a.result.content[0].text).toContain('NATIVE_OVER_LIMIT');
+    // Payers are promised up to 10,000 credits (founder 2026-11-18); the $12,750 check is margin.
+    expect(a.result.content[0].text).toContain('up to 10,000 credits');
+    expect(a.result.content[0].text).not.toContain('12,000');
     expect(over.calls.some((c) => c.url === `${MPP_BASE}/create-invoice`)).toBe(false);
 
     const under = mockFetch({ quote: { supportedSources: ALL_NATIVE, callerPays: '0.50', quote: { callerPays: '0.50' } } });
@@ -435,8 +441,9 @@ describe('native coins and Arbitrum', () => {
     expect(c.result.isError).toBeFalsy();
 
     // The cap itself and just under it are allowed (amount <= $12,750); $3,500.01 (the old cap + $0.01) and
-    // $12,726 (12,000 OpenRouter credits with the fee) too.
-    for (const usd of ['3500.01', '12726', '12749.99', '12750', '12750.00']) {
+    // $12,726 (12,000 OpenRouter credits with the fee) too; $10,605 and $10,711.05 are the promised 10,000 credits
+    // with the fee, and with the 1% quote buffer on top.
+    for (const usd of ['3500.01', '10605', '10711.05', '12726', '12749.99', '12750', '12750.00']) {
       const at = mockFetch({
         quote: { supportedSources: ALL_NATIVE, callerPays: usd, quote: { callerPays: usd } },
         payment: nativePayment({ source: { chainId: '8453', tokenSymbol: 'ETH', receiverAddress: '0x1111111111111111111111111111111111111111', amount: '1.2' } }),
