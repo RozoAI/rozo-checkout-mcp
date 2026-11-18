@@ -519,7 +519,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
           const usd = snap.callerPays === null ? NaN : Number(snap.callerPays);
           const max = nativeMaxUsdFor(token);
           if (Number.isFinite(usd) && usd > max) {
-            const promise = max === POL_MAX_USD ? `POL takes invoices up to $${POL_MAX_USD}` : 'ETH, BNB and SOL take OpenRouter invoices of up to 10,000 credits';
+            const promise = max === POL_MAX_USD ? `POL takes invoices up to $${POL_MAX_USD.toLocaleString('en-US')}` : 'ETH, BNB and SOL take OpenRouter invoices of up to 10,000 credits';
             return fail('NATIVE_OVER_LIMIT', `This invoice is too large for ${token} ($${snap.callerPays} including the service fee); ${promise}. Pay with USDC or USDT.`);
           }
           const min = nativeMinUsd(quote, chainId, token);
