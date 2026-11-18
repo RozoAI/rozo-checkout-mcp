@@ -72,10 +72,19 @@ export function alphaRow(chainId: string): SourceRow | undefined {
   return ALPHA_SOURCES.find((s) => s.chainId === chainId);
 }
 
-/** Upper bound on callerPays (service fee included) for a native order (amount <= cap is allowed). Mirrors the backend
- * MAX_NATIVE_PAYIN_USD and checkout.rozo.ai: $3,500 since 2026-10-23 (was $3,200 from 2026-10-20,
- * $2,000 before; this copy had stayed at $2,000). */
-export const NATIVE_MAX_USD = 3500;
+/** Upper bound on callerPays (service fee included) for a native ETH, BNB or SOL order (amount <= cap is allowed).
+ * Mirrors the customer cap on checkout.rozo.ai, MPP Router and the intents app_config knob
+ * NATIVE_MAX_ORDER_USD_merchant_openrouter: $12,750, i.e. up to 12,000 OpenRouter credits (backend hard cap $13,500).
+ * History: $3,500 from 2026-10-23, $3,200 from 2026-10-20, $2,000 before. */
+export const NATIVE_MAX_USD = 12750;
+
+/** POL keeps its own $3,500 cap: a larger POL order exceeds the 100,000 coin NEAR conversion limit. */
+export const POL_MAX_USD = 3500;
+
+/** Customer cap on callerPays (service fee included) for the native coin tokenSymbol. */
+export function nativeMaxUsdFor(tokenSymbol: string): number {
+  return tokenSymbol.toUpperCase() === 'POL' ? POL_MAX_USD : NATIVE_MAX_USD;
+}
 
 /**
  * Built-in per-chain USD minimum for a native order, mirrored from MPP Router
