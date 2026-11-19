@@ -269,6 +269,9 @@ describe('create_deposit_order', () => {
     expect(a.result.content[0].text).toContain('UNSUPPORTED_SOURCE');
     const b = await rpc('tools/call', { name: 'create_deposit_order', arguments: { url: 'https://evil.example/payment-links/pl_1', chainId: '900', tokenSymbol: 'USDT' } }, fn);
     expect(b.result.content[0].text).toContain('BAD_LINK');
+    // On-chain BTC (chain 9000, web only for now) is refused before any network call.
+    const c = await rpc('tools/call', { name: 'create_deposit_order', arguments: { url: LINK, chainId: '9000', tokenSymbol: 'BTC' } }, fn);
+    expect(c.error ?? c.result?.isError).toBeTruthy();
     expect(calls).toHaveLength(0);
   });
 });
@@ -354,8 +357,11 @@ describe('native coins and Arbitrum', () => {
     // 2026-11-17), and POL and TON carry no Beta label either.
     const zecNote = 'ZEC on Zcash is not available through this server: send a payer holding ZEC to https://checkout.rozo.ai/zec.';
     expect(text).toContain(zecNote);
+    // On-chain BTC (public Beta, PR-12) is web only: named apart from Lightning, sent to its page.
+    const btcNote = 'On-chain BTC (the Bitcoin network, Beta) is not available through this server either; the lightning chain id here is Bitcoin Lightning only. Send a payer who wants to pay on-chain to https://checkout.rozo.ai/btc-onchain.';
+    expect(text).toContain(btcNote);
     expect(rows.filter((r) => r.beta === true).map((r) => r.chainId)).toEqual(['728126428']);
-    const stripped = text.replace(zecNote, '').replace(/TRON \(Beta\)|TRON Beta|"beta": (true|false)/g, '');
+    const stripped = text.replace(zecNote, '').replace(btcNote, '').replace(/TRON \(Beta\)|TRON Beta|"beta": (true|false)/g, '');
     expect(stripped.toLowerCase()).not.toContain('beta');
     expect(rows.some((r) => r.tokens.includes('ZEC'))).toBe(false);
     expect(text).not.toMatch(/ZEC[^.]{0,20}\(Beta\)/);

@@ -5,7 +5,8 @@
  * NATIVE_SOURCE_DEFS (ETH@1, ETH@8453, ETH@42161, BNB@56, POL@137, SOL@900),
  * which production payment-api lists in GET /payments/supported. Lightning is
  * carried locally because it lives outside the server's own SUPPORTED_SOURCE
- * payload. Web-only native coins (ZEC, paid on checkout.rozo.ai/zec) are deliberately not listed.
+ * payload. Web-only coins (ZEC on checkout.rozo.ai/zec, on-chain BTC on
+ * checkout.rozo.ai/btc-onchain) are deliberately not listed here; see WEB_ONLY_ROUTES.
  *
  * `native` names the chain's native coin. A native order is exact-out like
  * Lightning: the order's source.amount is the exact coin amount, and its price
@@ -65,6 +66,11 @@ export const ALL_SOURCES: readonly SourceRow[] = [...SUPPORTED_SOURCES, ...ALPHA
 export const WEB_ONLY_ROUTES: readonly { name: string; chain: string; tokens: readonly string[]; url: string; beta?: boolean }[] = [
   { name: 'ZEC on Zcash', chain: 'Zcash', tokens: ['ZEC'], url: 'https://checkout.rozo.ai/zec', beta: false },
   { name: 'USDC on Arc', chain: 'Arc', tokens: ['USDC'], url: 'https://checkout.rozo.ai/arc' },
+  // On-chain Bitcoin (chain 9000, Beta). Not Lightning. Web only until the
+  // merchant API docs for it are published; then it moves to SUPPORTED_SOURCES
+  // with CHAIN_IDS, NATIVE_MIN_USD_FALLBACK and its own cap (ainative
+  // docs/design/20261118-btc-onchain-beta-plan.zh.md section 6).
+  { name: 'BTC on Bitcoin (on-chain, not Lightning)', chain: 'Bitcoin', tokens: ['BTC'], url: 'https://checkout.rozo.ai/btc-onchain', beta: true },
 ];
 
 /** The tron-ton-alpha row for chainId, if any. */

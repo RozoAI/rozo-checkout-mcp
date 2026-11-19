@@ -182,7 +182,8 @@ const NATIVE_NOTE =
   'Native coins (ETH on Ethereum, Base, Arbitrum; BNB on BNB Chain; POL on Polygon; SOL on Solana) are exact-out like Lightning: ' +
   'the order states the exact coin amount, priced at the current rate plus an FX spread on top of the service fee, and that price holds only until quoteExpiresAt. ' +
   `Native ETH, BNB and SOL take OpenRouter invoices of up to 10,000 credits (about $10,500; refused only above $${NATIVE_MAX_USD} of callerPays, service fee included, so a 10,000-credit invoice always fits). POL is capped at $${POL_MAX_USD} (native ETH on Ethereum needs at least $1), and a native coin is offered only when quote_invoice lists it for that invoice. ` +
-  'ZEC on Zcash is not available through this server: send a payer holding ZEC to https://checkout.rozo.ai/zec.';
+  'ZEC on Zcash is not available through this server: send a payer holding ZEC to https://checkout.rozo.ai/zec. ' +
+  'On-chain BTC (the Bitcoin network, Beta) is not available through this server either; the lightning chain id here is Bitcoin Lightning only. Send a payer who wants to pay on-chain to https://checkout.rozo.ai/btc-onchain.';
 
 const TRON_TON_NOTE =
   'USDT and TRX on TRON (Beta) and USDT on TON go through a dedicated route (route "tron_ton_alpha", the same backend as checkout.rozo.ai/tron and /ton): ' +
