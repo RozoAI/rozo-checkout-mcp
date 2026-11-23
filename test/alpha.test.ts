@@ -99,7 +99,10 @@ describe('supported_coins: TRON, TON and web-only routes', () => {
     const ton = payload.supportedSources.find((r: any) => r.chainId === '1600');
     expect(tron).toMatchObject({ chain: 'TRON', tokens: ['USDT', 'TRX'], decimals: { USDT: 6, TRX: 6 }, beta: true, route: 'tron_ton_alpha', fee: '1% with a $0.30 minimum' });
     expect(ton).toMatchObject({ chain: 'TON', tokens: ['USDT'], decimals: { USDT: 6 }, beta: false, route: 'tron_ton_alpha', fee: '1%' });
-    expect(payload.webOnlyRoutes.map((r: any) => r.url)).toEqual(['https://checkout.rozo.ai/zec', 'https://checkout.rozo.ai/arc', 'https://checkout.rozo.ai/btc-onchain']);
+    expect(payload.webOnlyRoutes.map((r: any) => r.url)).toEqual(['https://checkout.rozo.ai/zec', 'https://checkout.rozo.ai/arc', 'https://checkout.rozo.ai/celo', 'https://checkout.rozo.ai/btc-onchain']);
+    // Celo (Beta, 2026-11-23): web only, USDT and USDC, never a create_deposit_order chain id.
+    expect(payload.webOnlyRoutes.find((r: any) => r.url.endsWith('/celo'))).toMatchObject({ chain: 'Celo', tokens: ['USDT', 'USDC'], beta: true });
+    expect(payload.supportedSources.map((r: any) => r.chainId)).not.toContain('42220');
     // On-chain BTC (PR-12): web only, Beta, never a create_deposit_order chain id (not "9000"), never Lightning.
     const btc = payload.webOnlyRoutes.find((r: any) => r.url.endsWith('/btc-onchain'));
     expect(btc).toMatchObject({ chain: 'Bitcoin', tokens: ['BTC'], beta: true });
@@ -107,7 +110,7 @@ describe('supported_coins: TRON, TON and web-only routes', () => {
     expect(payload.supportedSources.map((r: any) => r.chainId)).not.toContain('9000');
     expect(calls).toHaveLength(0);
   });
-  it('never leaks internal-only items (Arc / Celo chain ids, Celo, DTOKEN, TRON pool internals)', async () => {
+  it('never leaks internal-only items (Arc / Celo chain ids, DTOKEN, TRON pool internals)', async () => {
     const { fn } = mockFetch();
     const req = new Request('https://mcp.rozo.ai/mcp', {
       method: 'POST',
@@ -117,7 +120,8 @@ describe('supported_coins: TRON, TON and web-only routes', () => {
     const list = await (await handleMcp(req, fn, {})).text();
     const coins = JSON.stringify((await call('supported_coins', {}, fn)).payload);
     for (const text of [list, coins]) {
-      expect(text).not.toMatch(/\b5042\b|\b42220\b|\bCelo\b|\bDTOKEN\b/);
+      // Celo the name is public since 2026-11-23 (web-only route); its chain id stays out.
+      expect(text).not.toMatch(/\b5042\b|\b42220\b|\bDTOKEN\b/);
       // Same patterns as ainative ops/supported-matrix-baseline.json docs_internal_patterns.
       expect(text).not.toMatch(/\bTRON_[A-Z0-9_]{3,}\b|\broute_first\b/);
       expect(text).not.toMatch(/\bflush(ing)?\b/i);
