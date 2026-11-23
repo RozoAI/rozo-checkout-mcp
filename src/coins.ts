@@ -66,6 +66,11 @@ export const ALL_SOURCES: readonly SourceRow[] = [...SUPPORTED_SOURCES, ...ALPHA
 export const WEB_ONLY_ROUTES: readonly { name: string; chain: string; tokens: readonly string[]; url: string; beta?: boolean }[] = [
   { name: 'ZEC on Zcash', chain: 'Zcash', tokens: ['ZEC'], url: 'https://checkout.rozo.ai/zec', beta: false },
   { name: 'USDC on Arc', chain: 'Arc', tokens: ['USDC'], url: 'https://checkout.rozo.ai/arc' },
+  // Celo (Beta, founder 2026-11-23): USDT and USDC, each its own order; credits
+  // arrive about 25 to 30 minutes after payment (the router waits for Celo
+  // finality). Web only: create-invoice opens Celo only with ?beta=celo,
+  // which this server does not send.
+  { name: 'USDT or USDC on Celo (credits in about 25 to 30 minutes)', chain: 'Celo', tokens: ['USDT', 'USDC'], url: 'https://checkout.rozo.ai/celo', beta: true },
   // On-chain Bitcoin (chain 9000, Beta). Not Lightning. Web only until the
   // merchant API docs for it are published; then it moves to SUPPORTED_SOURCES
   // with CHAIN_IDS, NATIVE_MIN_USD_FALLBACK and its own cap (ainative
