@@ -11,9 +11,12 @@ import {
   alphaRow,
   type SourceRow,
   NATIVE_MAX_USD,
-  NATIVE_MAX_CREDITS,
   NATIVE_MIN_USD_FALLBACK,
   nativeMaxUsdFor,
+  liveNativeMaxUsd,
+  effectiveNativeMaxUsd,
+  capCreditsText,
+  capInvoiceText,
   chainName,
   isNativeSource,
   isSupportedSource,
@@ -181,7 +184,7 @@ function nativeMinUsd(quote: any, chainId: string, symbol: string): number {
 const NATIVE_NOTE =
   'Native coins (ETH on Ethereum, Base, Arbitrum; BNB on BNB Chain; POL on Polygon; SOL on Solana) are exact-out like Lightning: ' +
   'the order states the exact coin amount, priced at the current rate plus an FX spread on top of the service fee, and that price holds only until quoteExpiresAt. ' +
-  `Native ETH, BNB, SOL and POL take OpenRouter invoices of up to 1,100 credits (about $1,155; refused only above $${NATIVE_MAX_USD} of callerPays, service fee included, so a 1,100-credit invoice always fits). Native ETH on Ethereum needs at least $1, and a native coin is offered only when quote_invoice lists it for that invoice. ` +
+  `Native ETH, BNB, SOL and POL take OpenRouter invoices of up to ${capCreditsText(NATIVE_MAX_USD)} (about ${capInvoiceText(NATIVE_MAX_USD)}; refused only above $${NATIVE_MAX_USD} of callerPays, service fee included, so such an invoice always fits; quote_invoice returns the live per-coin cap as nativeMaxUsdBySource). Native ETH on Ethereum needs at least $1, and a native coin is offered only when quote_invoice lists it for that invoice. ` +
   'ZEC on Zcash is not available through this server: send a payer holding ZEC to https://checkout.rozo.ai/zec. ' +
   'On-chain BTC (the Bitcoin network, Beta) is not available through this server either; the lightning chain id here is Bitcoin Lightning only. Send a payer who wants to pay on-chain to https://checkout.rozo.ai/btc-onchain.';
 
@@ -441,8 +444,10 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
           supportedSources: [...offered, ...alphaRows],
           tronTon,
           nativeMinUsd: quote?.nativeMinUsd && typeof quote.nativeMinUsd === 'object' ? quote.nativeMinUsd : null,
-          nativeMaxUsd: NATIVE_MAX_USD,
-          nativeMaxUsdPol: nativeMaxUsdFor('POL'),
+          // Live from MPP Router quote-invoice when it sends them, else the ORDER_CAP_USD fallback.
+          nativeMaxUsd: liveNativeMaxUsd(quote, '8453', 'ETH') ?? NATIVE_MAX_USD,
+          nativeMaxUsdPol: liveNativeMaxUsd(quote, '137', 'POL') ?? nativeMaxUsdFor('POL'),
+          nativeMaxUsdBySource: quote?.nativeMaxUsd && typeof quote.nativeMaxUsd === 'object' ? quote.nativeMaxUsd : null,
           next: p.payable ? 'Call create_deposit_order with this url and the coin you hold.' : null,
         });
       } catch (err) {
@@ -518,11 +523,10 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
           // The USD limits apply to callerPays (fee included), as on the backend.
           // callerPays missing: the backend stays the gate for the USD limits.
           const usd = snap.callerPays === null ? NaN : Number(snap.callerPays);
-          const max = nativeMaxUsdFor(token);
+          // Live per-coin cap from the quote (MPP Router nativeMaxUsd), else the ORDER_CAP_USD fallback.
+          const max = effectiveNativeMaxUsd(quote, chainId, token);
           if (Number.isFinite(usd) && usd > max) {
-            const promise = max < NATIVE_MAX_USD
-              ? `${token} takes invoices up to $${max.toLocaleString('en-US')}`
-              : `ETH, BNB, SOL and POL take OpenRouter invoices of up to ${NATIVE_MAX_CREDITS.toLocaleString('en-US')} credits`;
+            const promise = `${token} takes OpenRouter invoices of up to ${capCreditsText(max)} (about ${capInvoiceText(max)})`;
             return fail('NATIVE_OVER_LIMIT', `This invoice is too large for ${token} ($${snap.callerPays} including the service fee); ${promise}. Pay with USDC or USDT.`);
           }
           const min = nativeMinUsd(quote, chainId, token);

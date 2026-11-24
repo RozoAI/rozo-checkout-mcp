@@ -83,25 +83,64 @@ export function alphaRow(chainId: string): SourceRow | undefined {
   return ALPHA_SOURCES.find((s) => s.chainId === chainId);
 }
 
-/** Upper bound on callerPays (service fee included) for a native ETH, BNB or SOL order (amount <= cap is allowed).
- * Mirrors the customer cap on checkout.rozo.ai, MPP Router and the intents app_config knob
- * NATIVE_MAX_ORDER_USD_merchant_openrouter: $1,200 (founder 2026-11-24 "maybe update to 1200 first"; backend
- * hard cap $13,500). Payers are promised up to 1,100 OpenRouter credits ($1,155 invoice, $1,166.55 with the fee,
- * about $1,178 with the 1% quote buffer), so a 1,100-credit order is not refused.
- * History: $12,750 from 2026-11-18 (promise 10,000 credits), $3,500 from 2026-10-23, $3,200 from 2026-10-20,
- * $2,000 before. */
-export const NATIVE_MAX_USD = 1200;
+/** Single-order customer cap in USD (callerPays, service fee included; amount <= cap is allowed) for native
+ * coins. ONE place to change it in this repo (README "How to change the order cap"). It is only the fallback:
+ * create_deposit_order and quote_invoice prefer the live per-coin cap MPP Router returns in quote-invoice
+ * `nativeMaxUsd` (liveNativeMaxUsd). Keep it equal to the intents app_config
+ * NATIVE_MAX_ORDER_USD_merchant_openrouter, MPP Router ORDER_CAP_USD and checkout.rozo.ai caps.js.
+ * History: $1,200 from 2026-11-24 (founder "maybe update to 1200 first"), $12,750 from 2026-11-18 (promise
+ * 10,000 credits), $3,500 from 2026-10-23, $3,200 from 2026-10-20, $2,000 before. */
+export const ORDER_CAP_USD = 1200;
+export const NATIVE_MAX_USD = ORDER_CAP_USD;
 
-/** Credits promised to payers for a native order (NATIVE_MAX_USD with the fee and quote buffer). */
-export const NATIVE_MAX_CREDITS = 1100;
+/** One OpenRouter credit is about $1.05 on the invoice; our fee is 1% and the native quote adds a 1% buffer. */
+const USD_PER_CREDIT = 1.05;
+const FEE_AND_BUFFER = 1.01 * 1.01;
+
+/** Credits we promise for a cap: the largest clean number (floor to 100, to 10 below $1,000) whose invoice, with
+ * the fee and the quote buffer, stays strictly under the cap. 1200 -> 1100. Same formula as checkout caps.js. */
+export function creditsForCap(capUsd: number): number {
+  const step = capUsd >= 1000 ? 100 : 10;
+  let credits = Math.floor(capUsd / FEE_AND_BUFFER / USD_PER_CREDIT / step) * step;
+  while (credits > 0 && credits * USD_PER_CREDIT * FEE_AND_BUFFER >= capUsd) credits -= step;
+  return Math.max(credits, 0);
+}
+
+/** Credits promised to payers at the fallback cap. */
+export const NATIVE_MAX_CREDITS = creditsForCap(ORDER_CAP_USD);
+
+/** Invoice USD of the credits promised for a cap (1200 -> 1155). */
+export function capInvoiceUsd(capUsd: number): number {
+  return Math.round(creditsForCap(capUsd) * USD_PER_CREDIT);
+}
+
+/** "<credits> credits" and "$<invoice>" for a cap. */
+export function capCreditsText(capUsd: number): string {
+  return `${creditsForCap(capUsd).toLocaleString('en-US')} credits`;
+}
+export function capInvoiceText(capUsd: number): string {
+  return `$${capInvoiceUsd(capUsd).toLocaleString('en-US')}`;
+}
 
 /** POL's own backend cap ($3,500: a larger POL order exceeds the 100,000 coin NEAR conversion limit). */
 export const POL_MAX_USD = 3500;
 
-/** Customer cap on callerPays (service fee included) for the native coin tokenSymbol: the lower of the coin cap
- * and the app cap, as the backend does (nativeOrderUsdBounds). With the app cap at $1,200, POL is $1,200 too. */
+/** Fallback customer cap for the native coin tokenSymbol: the lower of the coin cap and the app cap, as the
+ * backend does (nativeOrderUsdBounds). */
 export function nativeMaxUsdFor(tokenSymbol: string): number {
   return tokenSymbol.toUpperCase() === 'POL' ? Math.min(POL_MAX_USD, NATIVE_MAX_USD) : NATIVE_MAX_USD;
+}
+
+/** The live cap for one coin from a quote-invoice answer (`nativeMaxUsd: { chainId: { SYMBOL: usd } }`), or
+ * null when absent or invalid. */
+export function liveNativeMaxUsd(quote: any, chainId: string, tokenSymbol: string): number | null {
+  const v = Number(quote?.nativeMaxUsd?.[chainId]?.[tokenSymbol.toUpperCase()]);
+  return Number.isFinite(v) && v > 0 ? v : null;
+}
+
+/** Cap to enforce for one coin: live from the quote when present, else the fallback constant. */
+export function effectiveNativeMaxUsd(quote: any, chainId: string, tokenSymbol: string): number {
+  return liveNativeMaxUsd(quote, chainId, tokenSymbol) ?? nativeMaxUsdFor(tokenSymbol);
 }
 
 /**
