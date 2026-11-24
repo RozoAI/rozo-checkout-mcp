@@ -76,6 +76,12 @@ export const WEB_ONLY_ROUTES: readonly { name: string; chain: string; tokens: re
   // with CHAIN_IDS, NATIVE_MIN_USD_FALLBACK and its own cap (ainative
   // docs/design/20261118-btc-onchain-beta-plan.zh.md section 6).
   { name: 'BTC on Bitcoin (on-chain, not Lightning)', chain: 'Bitcoin', tokens: ['BTC'], url: 'https://checkout.rozo.ai/btc-onchain', beta: true },
+  // Gram (TON, Toncoin), the TON network's own coin: public Beta on /ton since
+  // rozo-rescue-landing #478 (2026-11-23), offered there while the router
+  // capability lists it. Web only: this server's TON route creates USDT orders
+  // only (ALPHA_TOKENS.ton). The name avoids the literal "TON (Beta)" because
+  // USDT on TON carries no Beta label.
+  { name: "Gram (TON, Toncoin), the TON network's own coin", chain: 'TON', tokens: ['TON'], url: 'https://checkout.rozo.ai/ton', beta: true },
 ];
 
 /** The tron-ton-alpha row for chainId, if any. */

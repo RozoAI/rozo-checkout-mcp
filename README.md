@@ -10,7 +10,9 @@ OpenRouter top-up (a Coinbase payment link, `payments.coinbase.com/payment-links
 - BTC over Lightning
 - USDT or TRX on TRON (Beta), USDT on TON
 
-ZEC on Zcash: use https://checkout.rozo.ai/zec, USDC on Arc: use https://checkout.rozo.ai/arc, and
+ZEC on Zcash: use https://checkout.rozo.ai/zec, USDC on Arc: use https://checkout.rozo.ai/arc,
+USDT or USDC on Celo (Beta, credits in about 25 to 30 minutes): use https://checkout.rozo.ai/celo,
+Gram (TON, Toncoin), the TON network's own coin, as a Beta: use https://checkout.rozo.ai/ton, and
 on-chain BTC (the Bitcoin network, Beta; not Lightning): use https://checkout.rozo.ai/btc-onchain;
 this server does not create those orders (`supported_coins` lists them under `webOnlyRoutes`).
 

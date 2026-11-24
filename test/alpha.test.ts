@@ -99,7 +99,8 @@ describe('supported_coins: TRON, TON and web-only routes', () => {
     const ton = payload.supportedSources.find((r: any) => r.chainId === '1600');
     expect(tron).toMatchObject({ chain: 'TRON', tokens: ['USDT', 'TRX'], decimals: { USDT: 6, TRX: 6 }, beta: true, route: 'tron_ton_alpha', fee: '1% with a $0.30 minimum' });
     expect(ton).toMatchObject({ chain: 'TON', tokens: ['USDT'], decimals: { USDT: 6 }, beta: false, route: 'tron_ton_alpha', fee: '1%' });
-    expect(payload.webOnlyRoutes.map((r: any) => r.url)).toEqual(['https://checkout.rozo.ai/zec', 'https://checkout.rozo.ai/arc', 'https://checkout.rozo.ai/celo', 'https://checkout.rozo.ai/btc-onchain']);
+    expect(payload.webOnlyRoutes.map((r: any) => r.url)).toEqual(['https://checkout.rozo.ai/zec', 'https://checkout.rozo.ai/arc', 'https://checkout.rozo.ai/celo', 'https://checkout.rozo.ai/btc-onchain', 'https://checkout.rozo.ai/ton']);
+    expect(payload.webOnlyRoutes.find((r: any) => r.url.endsWith('/ton'))).toMatchObject({ chain: 'TON', tokens: ['TON'], beta: true });
     // Celo (Beta, 2026-11-23): web only, USDT and USDC, never a create_deposit_order chain id.
     expect(payload.webOnlyRoutes.find((r: any) => r.url.endsWith('/celo'))).toMatchObject({ chain: 'Celo', tokens: ['USDT', 'USDC'], beta: true });
     expect(payload.supportedSources.map((r: any) => r.chainId)).not.toContain('42220');
