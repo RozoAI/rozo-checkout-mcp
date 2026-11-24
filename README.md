@@ -362,6 +362,20 @@ curl -s -X POST 'http://127.0.0.1:8787/mcp?src=dev' \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
 ```
 
+## How to change the order cap
+
+The native-coin single-order cap is one constant: `ORDER_CAP_USD` in `src/coins.ts`. The credits figure in
+every description and error is derived from it (`creditsForCap`: cap / 1% fee / 1% quote buffer / $1.05 per
+credit, floor to 100). At run time the server prefers the live per-coin cap MPP Router returns in
+quote-invoice `nativeMaxUsd`, so a router change applies here without a deploy; the constant is the fallback
+and the number in the static descriptions. `test/order-cap.test.ts` fails on a literal credits or invoice
+figure in `src/`, and on a README figure that does not match the constant.
+
+All layers move together, backend first: rozo-intents-api `app_config`
+`NATIVE_MAX_ORDER_USD_merchant_openrouter` (native) and `NATIVE_MAX_ORDER_USD_ZEC` (ZEC); MPP Router
+`src/routes/native-sources.ts` `ORDER_CAP_USD`; checkout.rozo.ai `site/assets/js/caps.js` `ORDER_CAP_USD`;
+this `ORDER_CAP_USD` (then `npx wrangler deploy`); ainative ops-patrol W42 `CAP_DECIDED`.
+
 ## Deploy
 
 Deployment needs owner approval and is not automated here (merging does not deploy). `wrangler.toml`

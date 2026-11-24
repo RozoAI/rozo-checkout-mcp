@@ -585,6 +585,23 @@ describe('quote_invoice pricing: callerPays is the fee-inclusive total', () => {
     expect(over.calls.some((c) => c.url === `${MPP_BASE}/create-invoice`)).toBe(false);
   });
 
+  it('prefers the live per-coin cap from quote-invoice nativeMaxUsd over the ORDER_CAP_USD fallback', async () => {
+    // Router says $500 for Ethereum ETH: $600 is refused although the fallback is $1,200.
+    const lower = mockFetch({ quote: { supportedSources: ALL_NATIVE, callerPays: '600', nativeMaxUsd: { '1': { ETH: 500 } }, quote: { callerPays: '594.06' } } });
+    const a = await rpc('tools/call', { name: 'create_deposit_order', arguments: { url: LINK, chainId: '1', tokenSymbol: 'ETH' } }, lower.fn);
+    expect(a.result.content[0].text).toContain('NATIVE_OVER_LIMIT');
+    expect(a.result.content[0].text).toContain('up to 460 credits (about $483)');
+    expect(lower.calls.some((c) => c.url === `${MPP_BASE}/create-invoice`)).toBe(false);
+    // Router says $2,000: $1,500 passes the MCP check (the backend stays the final gate).
+    const higher = mockFetch({
+      quote: { supportedSources: ALL_NATIVE, callerPays: '1500', nativeMaxUsd: { '1': { ETH: 2000 } }, quote: { callerPays: '1485.15' } },
+      payment: nativePayment({ source: { chainId: '1', tokenSymbol: 'ETH', receiverAddress: '0x1111111111111111111111111111111111111111', amount: '0.5' } }),
+    });
+    const b = await rpc('tools/call', { name: 'create_deposit_order', arguments: { url: LINK, chainId: '1', tokenSymbol: 'ETH' } }, higher.fn);
+    expect(b.result.content[0].text).not.toContain('NATIVE_OVER_LIMIT');
+    expect(higher.calls.some((c) => c.url === `${MPP_BASE}/create-invoice`)).toBe(true);
+  });
+
   it('caps POL at the lower of its own $3,500 and the app cap ($1,200)', async () => {
     const polSources = { '137': ['USDC', 'USDT', 'POL'] };
     const over = mockFetch({ quote: { supportedSources: polSources, callerPays: '1200.01', quote: { callerPays: '1188.13' } } });
