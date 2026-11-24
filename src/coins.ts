@@ -94,9 +94,10 @@ export function alphaRow(chainId: string): SourceRow | undefined {
  * create_deposit_order and quote_invoice prefer the live per-coin cap MPP Router returns in quote-invoice
  * `nativeMaxUsd` (liveNativeMaxUsd). Keep it equal to the intents app_config
  * NATIVE_MAX_ORDER_USD_merchant_openrouter, MPP Router ORDER_CAP_USD and checkout.rozo.ai caps.js.
- * History: $1,200 from 2026-11-24 (founder "maybe update to 1200 first"), $12,750 from 2026-11-18 (promise
- * 10,000 credits), $3,500 from 2026-10-23, $3,200 from 2026-10-20, $2,000 before. */
-export const ORDER_CAP_USD = 1200;
+ * History: $3,500 from 2026-11-24 after the funder tier upgrade (founder "3500"), $1,200 earlier the same day
+ * (founder "maybe update to 1200 first"), $12,750 from 2026-11-18 (promise 10,000 credits), $3,500 from
+ * 2026-10-23, $3,200 from 2026-10-20, $2,000 before. */
+export const ORDER_CAP_USD = 3500;
 export const NATIVE_MAX_USD = ORDER_CAP_USD;
 
 /** One OpenRouter credit is about $1.05 on the invoice; our fee is 1% and the native quote adds a 1% buffer. */

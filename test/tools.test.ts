@@ -151,9 +151,9 @@ describe('tools/list', () => {
     expect(create.inputSchema.properties.chainId.enum).toContain('lightning');
     expect(create.inputSchema.properties.chainId.enum).toContain('42161');
     expect(create.description).toMatch(/quoteExpiresAt/);
-    // Founder 2026-11-24 (cap $1,200): the promise is up to 1,100 OpenRouter credits for ETH, BNB, SOL and POL.
-    expect(create.description).toMatch(/up to 1,100 credits/);
-    expect(create.description).not.toMatch(/10,000|12,000|\$3500/);
+    // Founder 2026-11-24 (cap $3,500): the promise is up to 3,200 OpenRouter credits for ETH, BNB, SOL and POL.
+    expect(create.description).toMatch(/up to 3,200 credits/);
+    expect(create.description).not.toMatch(/10,000|12,000|1,100 credits/);
     expect(create.description).toMatch(/creates a one-time deposit order; you pay from your own wallet/i);
     const coins = tools.find((t) => t.name === 'supported_coins');
     expect(coins.description).toMatch(/^Answers which cryptocurrencies and chains can pay an OpenRouter credit top-up/);
@@ -385,8 +385,8 @@ describe('native coins and Arbitrum', () => {
     expect(rows.find((r) => r.chainId === '137').tokens).toEqual(['USDC', 'USDT']);
     expect(rows.find((r) => r.chainId === '137').native).toBeUndefined();
     expect(payload.nativeMinUsd).toEqual({ '1': { ETH: 1 } });
-    expect(payload.nativeMaxUsd).toBe(1200);
-    expect(payload.nativeMaxUsdPol).toBe(1200);
+    expect(payload.nativeMaxUsd).toBe(3500);
+    expect(payload.nativeMaxUsdPol).toBe(3500);
   });
 
   it('creates a native SOL order: exact amount, 9 decimals, expiresAt is the price lock', async () => {
@@ -424,12 +424,12 @@ describe('native coins and Arbitrum', () => {
     expect(calls.some((c) => c.url === `${MPP_BASE}/create-invoice`)).toBe(false);
   });
 
-  it('enforces the $1,200 cap and the per-chain minimum before creating anything', async () => {
-    const over = mockFetch({ quote: { supportedSources: ALL_NATIVE, callerPays: '1200.01', quote: { callerPays: '1188.13' } } });
+  it('enforces the $3,500 cap and the per-chain minimum before creating anything', async () => {
+    const over = mockFetch({ quote: { supportedSources: ALL_NATIVE, callerPays: '3500.01', quote: { callerPays: '3465.36' } } });
     const a = await rpc('tools/call', { name: 'create_deposit_order', arguments: { url: LINK, chainId: '1', tokenSymbol: 'ETH' } }, over.fn);
     expect(a.result.content[0].text).toContain('NATIVE_OVER_LIMIT');
-    // Payers are promised up to 1,100 credits (founder 2026-11-24 cap $1,200).
-    expect(a.result.content[0].text).toContain('up to 1,100 credits');
+    // Payers are promised up to 3,200 credits (founder 2026-11-24 cap $3,500).
+    expect(a.result.content[0].text).toContain('up to 3,200 credits');
     expect(a.result.content[0].text).not.toContain('10,000');
     expect(over.calls.some((c) => c.url === `${MPP_BASE}/create-invoice`)).toBe(false);
 
@@ -446,9 +446,9 @@ describe('native coins and Arbitrum', () => {
     const c = await rpc('tools/call', { name: 'create_deposit_order', arguments: { url: LINK, chainId: '8453', tokenSymbol: 'ETH' } }, base.fn);
     expect(c.result.isError).toBeFalsy();
 
-    // The cap itself and just under it are allowed (amount <= $1,200); $1,166.55 and $1,178.22 are the promised
-    // 1,100 credits with the fee, and with the 1% quote buffer on top.
-    for (const usd of ['1166.55', '1178.22', '1199.99', '1200', '1200.00']) {
+    // The cap itself and just under it are allowed (amount <= $3,500); $3,393.60 and $3,427.54 are the promised
+    // 3,200 credits with the fee, and with the 1% quote buffer on top. The earlier $1,200 cap is gone.
+    for (const usd of ['1200.01', '3393.60', '3427.54', '3499.99', '3500', '3500.00']) {
       const at = mockFetch({
         quote: { supportedSources: ALL_NATIVE, callerPays: usd, quote: { callerPays: usd } },
         payment: nativePayment({ source: { chainId: '8453', tokenSymbol: 'ETH', receiverAddress: '0x1111111111111111111111111111111111111111', amount: '1.2' } }),
@@ -574,19 +574,19 @@ describe('quote_invoice pricing: callerPays is the fee-inclusive total', () => {
     expect(formatAtomicUsdc('3500000000')).toBe('3500.000000');
   });
 
-  it('applies the native $1,200 cap to the fee-inclusive total, not the face value', async () => {
-    // Face value $1,190 is under the cap; with the 1% fee it is $1,201.90.
+  it('applies the native $3,500 cap to the fee-inclusive total, not the face value', async () => {
+    // Face value $3,470 is under the cap; with the 1% fee it is $3,504.70.
     const over = mockFetch({
-      quote: { supportedSources: ALL_NATIVE, callerPays: '1201.9', quote: { callerPays: '1190.000000', callerPaysAtomicUsdc: '1201900000' } },
+      quote: { supportedSources: ALL_NATIVE, callerPays: '3504.7', quote: { callerPays: '3470.000000', callerPaysAtomicUsdc: '3504700000' } },
     });
     const a = await rpc('tools/call', { name: 'create_deposit_order', arguments: { url: LINK, chainId: '1', tokenSymbol: 'ETH' } }, over.fn);
     expect(a.result.content[0].text).toContain('NATIVE_OVER_LIMIT');
-    expect(a.result.content[0].text).toContain('1201.900000');
+    expect(a.result.content[0].text).toContain('3504.700000');
     expect(over.calls.some((c) => c.url === `${MPP_BASE}/create-invoice`)).toBe(false);
   });
 
   it('prefers the live per-coin cap from quote-invoice nativeMaxUsd over the ORDER_CAP_USD fallback', async () => {
-    // Router says $500 for Ethereum ETH: $600 is refused although the fallback is $1,200.
+    // Router says $500 for Ethereum ETH: $600 is refused although the fallback is $3,500.
     const lower = mockFetch({ quote: { supportedSources: ALL_NATIVE, callerPays: '600', nativeMaxUsd: { '1': { ETH: 500 } }, quote: { callerPays: '594.06' } } });
     const a = await rpc('tools/call', { name: 'create_deposit_order', arguments: { url: LINK, chainId: '1', tokenSymbol: 'ETH' } }, lower.fn);
     expect(a.result.content[0].text).toContain('NATIVE_OVER_LIMIT');
@@ -602,16 +602,16 @@ describe('quote_invoice pricing: callerPays is the fee-inclusive total', () => {
     expect(higher.calls.some((c) => c.url === `${MPP_BASE}/create-invoice`)).toBe(true);
   });
 
-  it('caps POL at the lower of its own $3,500 and the app cap ($1,200)', async () => {
+  it('caps POL at the lower of its own $3,500 and the app cap ($3,500)', async () => {
     const polSources = { '137': ['USDC', 'USDT', 'POL'] };
-    const over = mockFetch({ quote: { supportedSources: polSources, callerPays: '1200.01', quote: { callerPays: '1188.13' } } });
+    const over = mockFetch({ quote: { supportedSources: polSources, callerPays: '3500.01', quote: { callerPays: '3465.36' } } });
     const a = await rpc('tools/call', { name: 'create_deposit_order', arguments: { url: LINK, chainId: '137', tokenSymbol: 'POL' } }, over.fn);
     expect(a.result.content[0].text).toContain('NATIVE_OVER_LIMIT');
-    expect(a.result.content[0].text).toContain('up to 1,100 credits');
+    expect(a.result.content[0].text).toContain('up to 3,200 credits');
     expect(over.calls.some((c) => c.url === `${MPP_BASE}/create-invoice`)).toBe(false);
 
     const at = mockFetch({
-      quote: { supportedSources: polSources, callerPays: '1200', quote: { callerPays: '1188.12' } },
+      quote: { supportedSources: polSources, callerPays: '3500', quote: { callerPays: '3465.35' } },
       payment: nativePayment({ source: { chainId: '137', tokenSymbol: 'POL', receiverAddress: '0x1111111111111111111111111111111111111111', amount: '40000' } }),
     });
     const r = await rpc('tools/call', { name: 'create_deposit_order', arguments: { url: LINK, chainId: '137', tokenSymbol: 'POL' } }, at.fn);
