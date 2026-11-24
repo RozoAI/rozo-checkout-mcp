@@ -85,18 +85,23 @@ export function alphaRow(chainId: string): SourceRow | undefined {
 
 /** Upper bound on callerPays (service fee included) for a native ETH, BNB or SOL order (amount <= cap is allowed).
  * Mirrors the customer cap on checkout.rozo.ai, MPP Router and the intents app_config knob
- * NATIVE_MAX_ORDER_USD_merchant_openrouter: $12,750 (backend hard cap $13,500). Payers are promised only up to
- * 10,000 OpenRouter credits ($10,605 with the fee; founder 2026-11-18 "10000 credits for all"), so the room above
- * that is a margin that keeps a 10,000-credit order from being refused, not an offer.
- * History: $3,500 from 2026-10-23, $3,200 from 2026-10-20, $2,000 before. */
-export const NATIVE_MAX_USD = 12750;
+ * NATIVE_MAX_ORDER_USD_merchant_openrouter: $1,200 (founder 2026-11-24 "maybe update to 1200 first"; backend
+ * hard cap $13,500). Payers are promised up to 1,100 OpenRouter credits ($1,155 invoice, $1,166.55 with the fee,
+ * about $1,178 with the 1% quote buffer), so a 1,100-credit order is not refused.
+ * History: $12,750 from 2026-11-18 (promise 10,000 credits), $3,500 from 2026-10-23, $3,200 from 2026-10-20,
+ * $2,000 before. */
+export const NATIVE_MAX_USD = 1200;
 
-/** POL keeps its own $3,500 cap: a larger POL order exceeds the 100,000 coin NEAR conversion limit. */
+/** Credits promised to payers for a native order (NATIVE_MAX_USD with the fee and quote buffer). */
+export const NATIVE_MAX_CREDITS = 1100;
+
+/** POL's own backend cap ($3,500: a larger POL order exceeds the 100,000 coin NEAR conversion limit). */
 export const POL_MAX_USD = 3500;
 
-/** Customer cap on callerPays (service fee included) for the native coin tokenSymbol. */
+/** Customer cap on callerPays (service fee included) for the native coin tokenSymbol: the lower of the coin cap
+ * and the app cap, as the backend does (nativeOrderUsdBounds). With the app cap at $1,200, POL is $1,200 too. */
 export function nativeMaxUsdFor(tokenSymbol: string): number {
-  return tokenSymbol.toUpperCase() === 'POL' ? POL_MAX_USD : NATIVE_MAX_USD;
+  return tokenSymbol.toUpperCase() === 'POL' ? Math.min(POL_MAX_USD, NATIVE_MAX_USD) : NATIVE_MAX_USD;
 }
 
 /**
